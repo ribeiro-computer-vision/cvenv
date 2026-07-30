@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.3"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.4"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.3"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.4"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -97,6 +97,8 @@ cvenv build-wheel pytorch3d --wheel-out-dir ./wheels
 
 A wheel is valid **only** where python (cp), torch, and CUDA match the machine it was
 built on — so build it on (or identically to) the runtime you'll use it on.
+`build_wheel` is **idempotent**: it reuses an existing wheel in the output dir; pass
+`force=True` / `--force` to rebuild (e.g. after the runtime's torch/CUDA changed).
 
 ## CLI reference
 
@@ -113,6 +115,7 @@ cvenv verify <components...>                       # import/probe sanity checks
 cvenv build-wheel [pytorch3d] [options]            # build a reusable wheel, do NOT install
     --wheel-out-dir DIR    output dir (default: persistent per-platform dir)
     --ref REF              git ref/branch/tag to build (default: stable)
+    --force                rebuild even if a wheel already exists in the output dir
 ```
 
 ## Notebooks
