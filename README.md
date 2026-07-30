@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.1"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.2"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.1"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.2"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -59,6 +59,32 @@ cvenv.get_component("pytorch3d").verify()     # sanity check
 
 `cvenv list -v` prints each component's "why this is tricky" teaching note.
 
+## Build PyTorch3D once, reuse forever
+
+A prebuilt wheel is the fast path. If none is available and `cvenv` builds
+PyTorch3D from source, it **saves the resulting wheel to a persistent directory**
+so you never pay the multi-minute compile twice:
+
+| platform     | default save dir            |
+|--------------|-----------------------------|
+| Colab        | `/content/drive/MyDrive/cvenv_wheels` (if Drive mounted; else ephemeral `/content/...` with a warning) |
+| RunPod       | `/workspace/cvenv_wheels`   |
+| Lightning AI | `…/this_studio/cvenv_wheels`|
+| local        | `~/.cvenv/wheels`           |
+
+```python
+# first time (builds + saves the wheel, then installs it)
+cvenv.get_component("pytorch3d").install(from_source=True)
+#   → 💾 saved reusable wheel: /content/drive/MyDrive/cvenv_wheels/pytorch3d-….whl
+
+# every session after (seconds, not minutes)
+cvenv.get_component("pytorch3d").install(
+    wheel_url="/content/drive/MyDrive/cvenv_wheels/pytorch3d-….whl")
+```
+
+Override the location with `wheel_out_dir=...` (Python) or `--wheel-out-dir DIR`
+(CLI). On Colab, mount Drive **before** building so the wheel persists.
+
 ## CLI reference
 
 ```
@@ -68,6 +94,7 @@ cvenv install <components...> [options]
     --wheel-url URL        prebuilt PyTorch3D wheel
     --checkpoint-dir DIR   reuse a locally staged checkpoint (skip download)
     --from-source          force a PyTorch3D source build
+    --wheel-out-dir DIR    where to save a source-built wheel (default: persistent per-platform dir)
     --force                reinstall even if already present
 cvenv verify <components...>                       # import/probe sanity checks
 ```
