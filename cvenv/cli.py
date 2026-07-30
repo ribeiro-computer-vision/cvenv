@@ -40,6 +40,8 @@ def _install_opts(args) -> dict:
         opts["checkpoint_dir"] = args.checkpoint_dir
     if args.from_source:
         opts["from_source"] = True
+    if args.wheel_out_dir:
+        opts["wheel_out_dir"] = args.wheel_out_dir
     return opts
 
 
@@ -103,6 +105,9 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--wheel-url", help="prebuilt wheel URL (pytorch3d)")
     pi.add_argument("--checkpoint-dir", help="local dir holding a pre-staged checkpoint")
     pi.add_argument("--from-source", action="store_true", help="force source build (pytorch3d)")
+    pi.add_argument("--wheel-out-dir",
+                    help="dir to save a source-built pytorch3d wheel (default: a "
+                         "persistent per-platform dir, e.g. Drive on Colab)")
     pi.add_argument("--force", action="store_true", help="reinstall even if present")
     pi.set_defaults(func=_cmd_install)
 

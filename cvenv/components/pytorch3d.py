@@ -15,6 +15,7 @@ source" so confusing). The source fallback only kicks in when no wheel was given
 
 from __future__ import annotations
 
+import glob
 import os
 import sys
 import tempfile
@@ -51,6 +52,32 @@ def _normalize_dropbox(url: str) -> str:
     q = dict(parse_qsl(p.query, keep_blank_values=True))
     q["dl"] = "1"
     return urlunparse(p._replace(query=urlencode(q, doseq=True)))
+
+
+def _default_wheel_dir(platform=None) -> str:
+    """A persistent, platform-appropriate directory to save built wheels so they
+    survive session/runtime resets and can be reused next time."""
+    if platform is None:
+        from ..platform import PlatformManager
+        platform = PlatformManager().platform
+
+    if platform == "Colab":
+        drive = "/content/drive/MyDrive"
+        if os.path.isdir(drive):
+            return os.path.join(drive, "cvenv_wheels")
+        print("⚠️  Google Drive is not mounted at /content/drive — the built wheel "
+              "will go to /content/cvenv_wheels, which is LOST on runtime reset.\n"
+              "    To persist it: from google.colab import drive; "
+              "drive.mount('/content/drive'), then rebuild.")
+        return "/content/cvenv_wheels"
+    if platform == "RunPod":
+        return "/workspace/cvenv_wheels"                 # persistent volume
+    if platform == "LightningAI":
+        studio = "/teamspace/studios/this_studio"
+        base = studio if os.path.isdir(studio) else os.getcwd()
+        return os.path.join(base, "cvenv_wheels")
+    # LocalPC / unknown: a stable spot in the user's home
+    return os.path.join(os.path.expanduser("~"), ".cvenv", "wheels")
 
 
 def _c_import_error() -> str:
@@ -109,16 +136,48 @@ class PyTorch3D(Component):
                 f"URL is a direct download (Dropbox: keep '?...&dl=1'). URL: {url}")
         return dest
 
-    def _source_build(self) -> None:
-        from .._pip import pip_install
+    def _source_build(self, wheel_out_dir=None, platform=None) -> None:
+        """Build PyTorch3D from source into a REUSABLE wheel (saved to a
+        persistent dir), then install that wheel. Reusing the saved wheel next
+        session takes seconds instead of a fresh multi-minute compile."""
+        from .._pip import pip_install, run
+
         print("Building PyTorch3D from source (this can take several minutes)…")
         pip_install("ninja", extra_args=["--root-user-action", "ignore"], check=False)
-        pip_install("git+https://github.com/facebookresearch/pytorch3d.git@stable",
-                    check=False)
+
+        # A CUDA-enabled build needs FORCE_CUDA=1; without it the compile can
+        # silently produce a CPU-only extension. CUDA_HOME must point at the
+        # toolkit matching the runtime's torch build.
+        os.environ.setdefault("FORCE_CUDA", "1")
+        if os.path.isdir("/usr/local/cuda"):
+            os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
+
+        spec = "git+https://github.com/facebookresearch/pytorch3d.git@stable"
+        out_dir = wheel_out_dir or _default_wheel_dir(platform)
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+        # torch/iopath/ninja are already present, so skip build isolation (an
+        # isolated env wouldn't have torch, which PyTorch3D imports at build time).
+        run([sys.executable, "-m", "pip", "wheel", "--no-deps",
+             "--no-build-isolation", spec, "-w", out_dir], check=False)
+
+        whls = sorted(glob.glob(os.path.join(out_dir, "pytorch3d-*.whl")))
+        if whls:
+            whl = whls[-1]
+            print(f"\n💾 saved reusable wheel: {whl}")
+            pip_install(whl, extra_args=["--force-reinstall", "--no-deps"], check=False)
+            print("   ↻ next time, skip the build with:\n"
+                  f'       cvenv.get_component("pytorch3d").install(wheel_url="{whl}")\n'
+                  f"     or:  cvenv install pytorch3d --wheel-url {whl}")
+        else:
+            print("⚠️  wheel build produced no .whl; installing directly from source "
+                  "as a fallback.")
+            pip_install(spec, extra_args=["--no-build-isolation"], check=False)
 
     # -- install -----------------------------------------------------------
 
-    def _install(self, platform=None, wheel_url=None, from_source=False, **opts) -> None:
+    def _install(self, platform=None, wheel_url=None, from_source=False,
+                 wheel_out_dir=None, **opts) -> None:
         from .._pip import pip_install
 
         # Keep numpy-2 ABI intact (see the `science` component's note).
@@ -126,7 +185,7 @@ class PyTorch3D(Component):
         pip_install("iopath", check=False)
 
         if from_source:
-            self._source_build()
+            self._source_build(wheel_out_dir=wheel_out_dir, platform=platform)
             return
 
         if wheel_url:
@@ -160,7 +219,7 @@ class PyTorch3D(Component):
                             check=False)
         if self.is_installed():
             return
-        self._source_build()
+        self._source_build(wheel_out_dir=wheel_out_dir, platform=platform)
 
     def verify(self) -> bool:
         import torch  # noqa: F401  (load libc10 first)
