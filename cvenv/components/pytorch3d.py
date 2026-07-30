@@ -136,14 +136,28 @@ class PyTorch3D(Component):
                 f"URL is a direct download (Dropbox: keep '?...&dl=1'). URL: {url}")
         return dest
 
-    def build_wheel(self, out_dir=None, platform=None, ref="stable", **opts) -> str:
+    def build_wheel(self, out_dir=None, platform=None, ref="stable",
+                    force=False, **opts) -> str:
         """Build a reusable PyTorch3D wheel from source and save it, WITHOUT
         installing. Returns the wheel path.
 
-        The wheel is valid only where python (cp), torch, and CUDA match the box
-        it was built on — so build it on the target runtime (or an identical one).
+        Idempotent: if a ``pytorch3d-*.whl`` already exists in ``out_dir`` it is
+        reused (no rebuild) unless ``force=True``. A wheel is valid only where
+        python (cp), torch, and CUDA match the box it was built on — so if the
+        existing wheel came from a different runtime, rebuild with ``force=True``.
         """
         from .._pip import pip_install, run
+
+        out_dir = out_dir or _default_wheel_dir(platform)
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+
+        existing = glob.glob(os.path.join(out_dir, "pytorch3d-*.whl"))
+        if existing and not force:
+            whl = max(existing, key=os.path.getmtime)
+            print(f"✅ reusing existing wheel: {whl}\n"
+                  "   (a wheel only matches the torch/CUDA/python it was built "
+                  "against — pass force=True / --force to rebuild for this runtime.)")
+            return whl
 
         print(f"Building a PyTorch3D wheel from source (ref={ref}); "
               "this can take several minutes…")
@@ -160,8 +174,7 @@ class PyTorch3D(Component):
             os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
 
         spec = f"git+https://github.com/facebookresearch/pytorch3d.git@{ref}"
-        out_dir = out_dir or _default_wheel_dir(platform)
-        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        before = set(existing)
 
         # torch/iopath/ninja are already present, so skip build isolation (an
         # isolated env wouldn't have torch, which PyTorch3D imports at build time).
@@ -171,7 +184,9 @@ class PyTorch3D(Component):
         whls = glob.glob(os.path.join(out_dir, "pytorch3d-*.whl"))
         if not whls:
             raise RuntimeError(f"wheel build produced no .whl in {out_dir}")
-        whl = max(whls, key=os.path.getmtime)  # newest, in case the dir has several
+        # prefer a freshly-produced wheel; fall back to newest overall
+        fresh = [w for w in whls if w not in before]
+        whl = max(fresh or whls, key=os.path.getmtime)
         print(f"💾 saved reusable wheel: {whl}")
         return whl
 
@@ -179,8 +194,10 @@ class PyTorch3D(Component):
         """Build the wheel (saved to a persistent dir), then install it. Reusing
         the saved wheel next session takes seconds, not a fresh compile."""
         from .._pip import pip_install
+        # from_source is the recovery path (wheels didn't work), so force a
+        # genuine rebuild rather than reusing a possibly-mismatched saved wheel.
         try:
-            whl = self.build_wheel(out_dir=wheel_out_dir, platform=platform)
+            whl = self.build_wheel(out_dir=wheel_out_dir, platform=platform, force=True)
         except RuntimeError as e:
             print(f"⚠️  {e}; installing directly from source as a fallback.")
             pip_install("git+https://github.com/facebookresearch/pytorch3d.git@stable",

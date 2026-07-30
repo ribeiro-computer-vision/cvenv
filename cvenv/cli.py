@@ -77,7 +77,8 @@ def _cmd_build_wheel(args) -> int:
     for name in (args.components or ["pytorch3d"]):
         try:
             path = get_component(name).build_wheel(
-                out_dir=args.wheel_out_dir, platform=pm.platform, ref=args.ref)
+                out_dir=args.wheel_out_dir, platform=pm.platform,
+                ref=args.ref, force=args.force)
             print(f"✅ {name}: {path}")
         except Exception as e:
             print(f"❌ {name}: {e}")
@@ -138,6 +139,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="output dir (default: persistent per-platform dir)")
     pw.add_argument("--ref", default="stable",
                     help="git ref/branch/tag to build (pytorch3d; default: stable)")
+    pw.add_argument("--force", action="store_true",
+                    help="rebuild even if a wheel already exists in the output dir")
     pw.set_defaults(func=_cmd_build_wheel)
 
     return p
