@@ -50,6 +50,15 @@ class Component:
         """Post-install sanity check. Override. Return True / raise on failure."""
         raise NotImplementedError
 
+    def build_wheel(self, out_dir=None, platform=None, **opts) -> str:
+        """Build a reusable wheel WITHOUT installing it, returning its path.
+
+        Only components whose install compiles from source (e.g. pytorch3d)
+        support this. Override there; the default rejects it."""
+        raise NotImplementedError(
+            f"{self.name} has no wheel to build (it's not a compiled-from-source "
+            "component).")
+
 
 REGISTRY: Dict[str, Component] = {}
 

@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.2"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.3"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.2"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.3"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -85,6 +85,19 @@ cvenv.get_component("pytorch3d").install(
 Override the location with `wheel_out_dir=...` (Python) or `--wheel-out-dir DIR`
 (CLI). On Colab, mount Drive **before** building so the wheel persists.
 
+**Build the wheel without installing** (e.g. produce an artifact on a build box to
+download or hand to students) — `build_wheel` / `cvenv build-wheel`:
+
+```python
+whl = cvenv.get_component("pytorch3d").build_wheel(out_dir="./wheels")   # returns the path
+```
+```bash
+cvenv build-wheel pytorch3d --wheel-out-dir ./wheels
+```
+
+A wheel is valid **only** where python (cp), torch, and CUDA match the machine it was
+built on — so build it on (or identically to) the runtime you'll use it on.
+
 ## CLI reference
 
 ```
@@ -97,7 +110,25 @@ cvenv install <components...> [options]
     --wheel-out-dir DIR    where to save a source-built wheel (default: persistent per-platform dir)
     --force                reinstall even if already present
 cvenv verify <components...>                       # import/probe sanity checks
+cvenv build-wheel [pytorch3d] [options]            # build a reusable wheel, do NOT install
+    --wheel-out-dir DIR    output dir (default: persistent per-platform dir)
+    --ref REF              git ref/branch/tag to build (default: stable)
 ```
+
+## Notebooks
+
+Ready-to-run notebooks live in [`notebooks/`](notebooks/). To use one: open it in
+Colab (**Runtime → Change runtime type → GPU** for the GPU components), then run the
+cells top to bottom. Each installs `cvenv` in its first cell, so nothing else needs to
+be set up first.
+
+- **`cvenv_demo.ipynb`** — one cell per component (`install` + `verify`). Use it as a
+  menu: copy the single cell you need (e.g. just `sam2`) into your own tutorial
+  notebook.
+- **`cvenv_create_pytorch3d_wheel.ipynb`** — build a PyTorch3D wheel matching the
+  current runtime, save it to Drive, and install it. Run this **once** when a runtime
+  has no working wheel; afterwards every session reuses the saved `.whl` in seconds.
+  Shows both the Python (`build_wheel`) and CLI (`cvenv build-wheel`) paths.
 
 ## Notes
 
