@@ -7,3 +7,6 @@ dist/
 .venv/
 checkpoints/
 mast3r/
+
+.DS_Store
+
