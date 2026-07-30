@@ -136,13 +136,20 @@ class PyTorch3D(Component):
                 f"URL is a direct download (Dropbox: keep '?...&dl=1'). URL: {url}")
         return dest
 
-    def _source_build(self, wheel_out_dir=None, platform=None) -> None:
-        """Build PyTorch3D from source into a REUSABLE wheel (saved to a
-        persistent dir), then install that wheel. Reusing the saved wheel next
-        session takes seconds instead of a fresh multi-minute compile."""
+    def build_wheel(self, out_dir=None, platform=None, ref="stable", **opts) -> str:
+        """Build a reusable PyTorch3D wheel from source and save it, WITHOUT
+        installing. Returns the wheel path.
+
+        The wheel is valid only where python (cp), torch, and CUDA match the box
+        it was built on — so build it on the target runtime (or an identical one).
+        """
         from .._pip import pip_install, run
 
-        print("Building PyTorch3D from source (this can take several minutes)…")
+        print(f"Building a PyTorch3D wheel from source (ref={ref}); "
+              "this can take several minutes…")
+        # Build-time prerequisites (harmless if already satisfied).
+        pip_install("numpy>=2.0,<2.1", check=False)
+        pip_install("iopath", check=False)
         pip_install("ninja", extra_args=["--root-user-action", "ignore"], check=False)
 
         # A CUDA-enabled build needs FORCE_CUDA=1; without it the compile can
@@ -152,8 +159,8 @@ class PyTorch3D(Component):
         if os.path.isdir("/usr/local/cuda"):
             os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
 
-        spec = "git+https://github.com/facebookresearch/pytorch3d.git@stable"
-        out_dir = wheel_out_dir or _default_wheel_dir(platform)
+        spec = f"git+https://github.com/facebookresearch/pytorch3d.git@{ref}"
+        out_dir = out_dir or _default_wheel_dir(platform)
         Path(out_dir).mkdir(parents=True, exist_ok=True)
 
         # torch/iopath/ninja are already present, so skip build isolation (an
@@ -161,18 +168,28 @@ class PyTorch3D(Component):
         run([sys.executable, "-m", "pip", "wheel", "--no-deps",
              "--no-build-isolation", spec, "-w", out_dir], check=False)
 
-        whls = sorted(glob.glob(os.path.join(out_dir, "pytorch3d-*.whl")))
-        if whls:
-            whl = whls[-1]
-            print(f"\n💾 saved reusable wheel: {whl}")
-            pip_install(whl, extra_args=["--force-reinstall", "--no-deps"], check=False)
-            print("   ↻ next time, skip the build with:\n"
-                  f'       cvenv.get_component("pytorch3d").install(wheel_url="{whl}")\n'
-                  f"     or:  cvenv install pytorch3d --wheel-url {whl}")
-        else:
-            print("⚠️  wheel build produced no .whl; installing directly from source "
-                  "as a fallback.")
-            pip_install(spec, extra_args=["--no-build-isolation"], check=False)
+        whls = glob.glob(os.path.join(out_dir, "pytorch3d-*.whl"))
+        if not whls:
+            raise RuntimeError(f"wheel build produced no .whl in {out_dir}")
+        whl = max(whls, key=os.path.getmtime)  # newest, in case the dir has several
+        print(f"💾 saved reusable wheel: {whl}")
+        return whl
+
+    def _source_build(self, wheel_out_dir=None, platform=None) -> None:
+        """Build the wheel (saved to a persistent dir), then install it. Reusing
+        the saved wheel next session takes seconds, not a fresh compile."""
+        from .._pip import pip_install
+        try:
+            whl = self.build_wheel(out_dir=wheel_out_dir, platform=platform)
+        except RuntimeError as e:
+            print(f"⚠️  {e}; installing directly from source as a fallback.")
+            pip_install("git+https://github.com/facebookresearch/pytorch3d.git@stable",
+                        extra_args=["--no-build-isolation"], check=False)
+            return
+        pip_install(whl, extra_args=["--force-reinstall", "--no-deps"], check=False)
+        print("   ↻ next time, skip the build with:\n"
+              f'       cvenv.get_component("pytorch3d").install(wheel_url="{whl}")\n'
+              f"     or:  cvenv install pytorch3d --wheel-url {whl}")
 
     # -- install -----------------------------------------------------------
 

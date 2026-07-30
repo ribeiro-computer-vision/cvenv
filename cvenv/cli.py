@@ -70,6 +70,21 @@ def _cmd_verify(args) -> int:
     return rc
 
 
+def _cmd_build_wheel(args) -> int:
+    pm = PlatformManager()
+    print(f"Platform: {pm.platform}\n")
+    rc = 0
+    for name in (args.components or ["pytorch3d"]):
+        try:
+            path = get_component(name).build_wheel(
+                out_dir=args.wheel_out_dir, platform=pm.platform, ref=args.ref)
+            print(f"✅ {name}: {path}")
+        except Exception as e:
+            print(f"❌ {name}: {e}")
+            rc = 1
+    return rc
+
+
 def _numpy_version():
     try:
         import numpy
@@ -114,6 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
     pv = sub.add_parser("verify", help="verify one or more components")
     pv.add_argument("components", nargs="+")
     pv.set_defaults(func=_cmd_verify)
+
+    pw = sub.add_parser("build-wheel",
+                        help="build a reusable wheel WITHOUT installing (pytorch3d)")
+    pw.add_argument("components", nargs="*", default=["pytorch3d"],
+                    help="component(s) to build (default: pytorch3d)")
+    pw.add_argument("--wheel-out-dir",
+                    help="output dir (default: persistent per-platform dir)")
+    pw.add_argument("--ref", default="stable",
+                    help="git ref/branch/tag to build (pytorch3d; default: stable)")
+    pw.set_defaults(func=_cmd_build_wheel)
 
     return p
 
