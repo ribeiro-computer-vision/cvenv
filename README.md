@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.0"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.1"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.0"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.1"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
