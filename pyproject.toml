@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cvenv"
+version = "0.1.0"
+description = "À-la-carte environment installer for computer-vision / ML courses and projects (PyTorch3D, MASt3R, SAM2, and the science stack)."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Eraldo Ribeiro" }]
+keywords = ["setup", "installer", "pytorch3d", "mast3r", "sam2", "colab", "teaching"]
+
+# NOTE: intentionally NO heavy runtime dependencies. cvenv's job is to install
+# torch/pytorch3d/mast3r/sam2 etc. into whatever environment it runs in, so it
+# must stay importable on a bare machine. Everything heavy is imported lazily
+# inside the components.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/ribeiro-computer-vision/cvenv"
+
+[project.scripts]
+cvenv = "cvenv.cli:main"
+
+[tool.setuptools]
+packages = ["cvenv", "cvenv.components"]
