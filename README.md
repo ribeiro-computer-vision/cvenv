@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.4"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.5"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.4"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.5"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -116,6 +116,8 @@ cvenv build-wheel [pytorch3d] [options]            # build a reusable wheel, do 
     --wheel-out-dir DIR    output dir (default: persistent per-platform dir)
     --ref REF              git ref/branch/tag to build (default: stable)
     --force                rebuild even if a wheel already exists in the output dir
+    --cuda-home DIR        CUDA toolkit dir (must match torch's CUDA; default /usr/local/cuda)
+    --arch-list LIST       TORCH_CUDA_ARCH_LIST, e.g. 8.0 (default: the running GPU's arch)
 ```
 
 ## Notebooks
@@ -143,3 +145,10 @@ be set up first.
 - **PyTorch3D** verification always tests `import pytorch3d._C`, not just
   `import pytorch3d` — the latter succeeds even when the compiled extension is
   broken.
+- **PyTorch3D source build**: by default it compiles for the **running GPU's**
+  compute capability only. Building for many arches at once is a common trigger of
+  the pulsar `undefined reference … <true>` link error; single-arch avoids it and is
+  faster. Override with `arch_list=` / `--arch-list` (e.g. `8.0`), and point
+  `cuda_home=` / `--cuda-home` at a toolkit matching `torch.version.cuda` if the
+  default `/usr/local/cuda` doesn't. (A CUDA/torch mismatch is the *other* pulsar
+  link cause.)
