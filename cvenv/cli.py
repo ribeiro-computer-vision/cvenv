@@ -42,6 +42,10 @@ def _install_opts(args) -> dict:
         opts["from_source"] = True
     if args.wheel_out_dir:
         opts["wheel_out_dir"] = args.wheel_out_dir
+    if getattr(args, "cuda_home", None):
+        opts["cuda_home"] = args.cuda_home
+    if getattr(args, "arch_list", None):
+        opts["arch_list"] = args.arch_list
     return opts
 
 
@@ -78,7 +82,8 @@ def _cmd_build_wheel(args) -> int:
         try:
             path = get_component(name).build_wheel(
                 out_dir=args.wheel_out_dir, platform=pm.platform,
-                ref=args.ref, force=args.force)
+                ref=args.ref, force=args.force,
+                cuda_home=args.cuda_home, arch_list=args.arch_list)
             print(f"✅ {name}: {path}")
         except Exception as e:
             print(f"❌ {name}: {e}")
@@ -124,6 +129,10 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--wheel-out-dir",
                     help="dir to save a source-built pytorch3d wheel (default: a "
                          "persistent per-platform dir, e.g. Drive on Colab)")
+    pi.add_argument("--cuda-home",
+                    help="CUDA toolkit dir for a source build (must match torch's CUDA)")
+    pi.add_argument("--arch-list",
+                    help="TORCH_CUDA_ARCH_LIST for a source build (default: running GPU's arch)")
     pi.add_argument("--force", action="store_true", help="reinstall even if present")
     pi.set_defaults(func=_cmd_install)
 
@@ -141,6 +150,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="git ref/branch/tag to build (pytorch3d; default: stable)")
     pw.add_argument("--force", action="store_true",
                     help="rebuild even if a wheel already exists in the output dir")
+    pw.add_argument("--cuda-home",
+                    help="CUDA toolkit dir (must match torch's CUDA; default /usr/local/cuda)")
+    pw.add_argument("--arch-list",
+                    help="TORCH_CUDA_ARCH_LIST, e.g. 8.0 (default: the running GPU's arch)")
     pw.set_defaults(func=_cmd_build_wheel)
 
     return p

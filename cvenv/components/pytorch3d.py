@@ -137,7 +137,7 @@ class PyTorch3D(Component):
         return dest
 
     def build_wheel(self, out_dir=None, platform=None, ref="stable",
-                    force=False, **opts) -> str:
+                    force=False, cuda_home=None, arch_list=None, **opts) -> str:
         """Build a reusable PyTorch3D wheel from source and save it, WITHOUT
         installing. Returns the wheel path.
 
@@ -145,6 +145,12 @@ class PyTorch3D(Component):
         reused (no rebuild) unless ``force=True``. A wheel is valid only where
         python (cp), torch, and CUDA match the box it was built on — so if the
         existing wheel came from a different runtime, rebuild with ``force=True``.
+
+        ``cuda_home`` overrides ``CUDA_HOME`` (must match torch's CUDA build, or
+        pulsar fails to link). ``arch_list`` sets ``TORCH_CUDA_ARCH_LIST``; if
+        unset it defaults to the **running GPU's** compute capability (a single
+        arch — building for many ``-gencode`` targets is a common cause of the
+        pulsar ``undefined reference … <true>`` link failure).
         """
         from .._pip import pip_install, run
 
@@ -168,10 +174,32 @@ class PyTorch3D(Component):
 
         # A CUDA-enabled build needs FORCE_CUDA=1; without it the compile can
         # silently produce a CPU-only extension. CUDA_HOME must point at the
-        # toolkit matching the runtime's torch build.
+        # toolkit matching the runtime's torch build (a mismatch also breaks
+        # pulsar's link).
         os.environ.setdefault("FORCE_CUDA", "1")
-        if os.path.isdir("/usr/local/cuda"):
+        if cuda_home:
+            os.environ["CUDA_HOME"] = cuda_home
+        elif os.path.isdir("/usr/local/cuda"):
             os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
+
+        # Build for a SINGLE GPU arch by default. Compiling for many -gencode
+        # targets (torch's default when TORCH_CUDA_ARCH_LIST is unset) is a
+        # common cause of the pulsar "undefined reference … <true>" link failure;
+        # restricting to the running GPU's compute capability avoids it and is
+        # much faster. Explicit arch_list / a pre-set env var win.
+        arch = arch_list or os.environ.get("TORCH_CUDA_ARCH_LIST")
+        if not arch:
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    maj, mn = torch.cuda.get_device_capability(0)
+                    arch = f"{maj}.{mn}"
+            except Exception:
+                arch = None
+        if arch:
+            os.environ["TORCH_CUDA_ARCH_LIST"] = arch
+            print(f"TORCH_CUDA_ARCH_LIST = {arch}  (CUDA_HOME = "
+                  f"{os.environ.get('CUDA_HOME')})")
 
         spec = f"git+https://github.com/facebookresearch/pytorch3d.git@{ref}"
         before = set(existing)
@@ -190,14 +218,15 @@ class PyTorch3D(Component):
         print(f"💾 saved reusable wheel: {whl}")
         return whl
 
-    def _source_build(self, wheel_out_dir=None, platform=None) -> None:
+    def _source_build(self, wheel_out_dir=None, platform=None, **kw) -> None:
         """Build the wheel (saved to a persistent dir), then install it. Reusing
         the saved wheel next session takes seconds, not a fresh compile."""
         from .._pip import pip_install
         # from_source is the recovery path (wheels didn't work), so force a
         # genuine rebuild rather than reusing a possibly-mismatched saved wheel.
         try:
-            whl = self.build_wheel(out_dir=wheel_out_dir, platform=platform, force=True)
+            whl = self.build_wheel(out_dir=wheel_out_dir, platform=platform,
+                                   force=True, **kw)
         except RuntimeError as e:
             print(f"⚠️  {e}; installing directly from source as a fallback.")
             pip_install("git+https://github.com/facebookresearch/pytorch3d.git@stable",
@@ -219,7 +248,9 @@ class PyTorch3D(Component):
         pip_install("iopath", check=False)
 
         if from_source:
-            self._source_build(wheel_out_dir=wheel_out_dir, platform=platform)
+            self._source_build(wheel_out_dir=wheel_out_dir, platform=platform,
+                               **{k: opts[k] for k in ("cuda_home", "arch_list")
+                                  if k in opts})
             return
 
         if wheel_url:
