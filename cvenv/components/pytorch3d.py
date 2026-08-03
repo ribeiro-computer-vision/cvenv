@@ -15,6 +15,7 @@ source" so confusing). The source fallback only kicks in when no wheel was given
 
 from __future__ import annotations
 
+import contextlib
 import glob
 import os
 import sys
@@ -23,6 +24,36 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from ..base import Component, register
+
+
+@contextlib.contextmanager
+def _system_linker():
+    """Temporarily neutralize conda's bundled ``compiler_compat/ld`` so the
+    final link uses the system linker.
+
+    Conda's old ``compiler_compat/ld`` can't link CUDA-13 / sm_90 objects and
+    fails with ``final link failed: bad value`` plus spurious pulsar
+    ``undefined reference … <true>`` errors. The exact same PyTorch3D source
+    builds fine outside conda (e.g. Colab). No-op when not in a conda env.
+    """
+    prefix = os.environ.get("CONDA_PREFIX")
+    ld = os.path.join(prefix, "compiler_compat", "ld") if prefix else None
+    moved = None
+    if ld and os.path.exists(ld):
+        try:
+            os.rename(ld, ld + ".cvenv-bak")
+            moved = ld
+            print(f"↪ neutralized conda linker → using system ld ({ld})")
+        except OSError as e:
+            print(f"⚠️  could not neutralize conda ld ({e}); build may fail to link.")
+    try:
+        yield
+    finally:
+        if moved and os.path.exists(moved + ".cvenv-bak"):
+            try:
+                os.rename(moved + ".cvenv-bak", moved)
+            except OSError:
+                pass
 
 
 def _wheel_tag() -> str | None:
@@ -206,8 +237,11 @@ class PyTorch3D(Component):
 
         # torch/iopath/ninja are already present, so skip build isolation (an
         # isolated env wouldn't have torch, which PyTorch3D imports at build time).
-        run([sys.executable, "-m", "pip", "wheel", "--no-deps",
-             "--no-build-isolation", spec, "-w", out_dir], check=False)
+        # _system_linker() works around conda's compiler_compat/ld failing to
+        # link CUDA-13/sm_90 objects (the pulsar "undefined reference" link error).
+        with _system_linker():
+            run([sys.executable, "-m", "pip", "wheel", "--no-deps",
+                 "--no-build-isolation", spec, "-w", out_dir], check=False)
 
         whls = glob.glob(os.path.join(out_dir, "pytorch3d-*.whl"))
         if not whls:

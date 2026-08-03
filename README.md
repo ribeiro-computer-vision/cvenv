@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.5"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.6"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.5"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.6"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -152,3 +152,8 @@ be set up first.
   `cuda_home=` / `--cuda-home` at a toolkit matching `torch.version.cuda` if the
   default `/usr/local/cuda` doesn't. (A CUDA/torch mismatch is the *other* pulsar
   link cause.)
+- **Conda envs (e.g. Lightning AI Studio):** conda's bundled `compiler_compat/ld`
+  can't link CUDA-13 / sm_90 objects and fails the build with `final link failed:
+  bad value` + spurious pulsar `undefined reference … <true>` errors — the *same*
+  source builds fine outside conda. The source build detects this and temporarily
+  switches to the system `ld` (reversible; no-op when not in a conda env).
