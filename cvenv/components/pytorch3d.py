@@ -213,12 +213,11 @@ class PyTorch3D(Component):
         elif os.path.isdir("/usr/local/cuda"):
             os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
 
-        # Build for a SINGLE GPU arch by default. Compiling for many -gencode
-        # targets (torch's default when TORCH_CUDA_ARCH_LIST is unset) is a
-        # common cause of the pulsar "undefined reference … <true>" link failure;
-        # restricting to the running GPU's compute capability avoids it and is
-        # much faster. Explicit arch_list / a pre-set env var win.
-        arch = arch_list or os.environ.get("TORCH_CUDA_ARCH_LIST")
+        # Build for a SINGLE GPU arch. Prefer an explicit arch_list, else the
+        # running GPU's compute capability. This intentionally OVERRIDES any
+        # ambient TORCH_CUDA_ARCH_LIST — Lightning Studio presets it to every
+        # arch, which slows the build and aggravates the pulsar link issue.
+        arch = arch_list
         if not arch:
             try:
                 import torch
@@ -227,10 +226,25 @@ class PyTorch3D(Component):
                     arch = f"{maj}.{mn}"
             except Exception:
                 arch = None
+        if not arch:
+            arch = os.environ.get("TORCH_CUDA_ARCH_LIST")
         if arch:
             os.environ["TORCH_CUDA_ARCH_LIST"] = arch
-            print(f"TORCH_CUDA_ARCH_LIST = {arch}  (CUDA_HOME = "
-                  f"{os.environ.get('CUDA_HOME')})")
+
+        # THE key fix for CUDA 13: nvcc now defaults
+        # -static-global-template-stub=true in whole-program mode (-rdc=false),
+        # which turns pulsar's cross-file __global__ template specializations
+        # (calc_signature<true>, render<true>, …) into stubs with no definition
+        # → "undefined reference … <true>" at final link. nvcc's own warning
+        # (#20280) says to set it false. Apply to every nvcc call in the build.
+        stub_flag = "-static-global-template-stub=false"
+        cur = os.environ.get("NVCC_APPEND_FLAGS", "")
+        if stub_flag not in cur:
+            os.environ["NVCC_APPEND_FLAGS"] = (cur + " " + stub_flag).strip()
+
+        print(f"TORCH_CUDA_ARCH_LIST = {os.environ.get('TORCH_CUDA_ARCH_LIST')} | "
+              f"CUDA_HOME = {os.environ.get('CUDA_HOME')} | "
+              f"NVCC_APPEND_FLAGS = {os.environ.get('NVCC_APPEND_FLAGS')}")
 
         spec = f"git+https://github.com/facebookresearch/pytorch3d.git@{ref}"
         before = set(existing)

@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.6"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.7"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.6"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.7"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -152,6 +152,13 @@ be set up first.
   `cuda_home=` / `--cuda-home` at a toolkit matching `torch.version.cuda` if the
   default `/usr/local/cuda` doesn't. (A CUDA/torch mismatch is the *other* pulsar
   link cause.)
+- **CUDA 13 / pulsar link error:** CUDA 13's nvcc defaults
+  `-static-global-template-stub=true`, which stubs out pulsar's cross-file
+  `__global__` template specializations and fails the final link with
+  `undefined reference to pulsar::Renderer::…<true>`. The source build sets
+  `NVCC_APPEND_FLAGS=-static-global-template-stub=false` (nvcc's own suggested
+  fix) so pulsar links on CUDA 13. This is why the same source builds on CUDA
+  12.x but not 13 until this flag is set.
 - **Conda envs (e.g. Lightning AI Studio):** conda's bundled `compiler_compat/ld`
   can't link CUDA-13 / sm_90 objects and fails the build with `final link failed:
   bad value` + spurious pulsar `undefined reference … <true>` errors — the *same*
