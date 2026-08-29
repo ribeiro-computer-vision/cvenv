@@ -66,7 +66,19 @@ def notebook_pins() -> list[tuple[str, str]]:
 
 
 def tag_at_head() -> str | None:
+    """A tag pointing at HEAD, but only when the tree is clean.
+
+    Between tagging one release and committing the next bump, HEAD still
+    carries the previous tag while the files already say the new version.
+    Flagging that is noise — it is exactly what being mid-release looks like.
+    CI always checks out clean, so the tag comparison still runs where it
+    matters, and passing a tag explicitly always forces the check.
+    """
     try:
+        dirty = subprocess.run(["git", "status", "--porcelain"], cwd=ROOT,
+                               capture_output=True, text=True).stdout.strip()
+        if dirty:
+            return None
         out = subprocess.run(["git", "describe", "--tags", "--exact-match"],
                              cwd=ROOT, capture_output=True, text=True)
         return out.stdout.strip() or None

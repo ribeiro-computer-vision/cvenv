@@ -194,7 +194,7 @@ def wheel_compatibility(whl: str):
         return None, ["no build metadata recorded beside this wheel"]
 
     reasons, unchecked = [], []
-    for key, label in (("python_tag", "python"), ("torch", "torch"), ("cuda", "CUDA")):
+    for key, label in (("python_tag", "python"), ("torch", "torch")):
         was, is_ = meta.get(key), now.get(key)
         if was is None or is_ is None:
             unchecked.append(label)
@@ -202,6 +202,25 @@ def wheel_compatibility(whl: str):
         same = was == is_ if key == "python_tag" else _short(was) == _short(is_)
         if not same:
             reasons.append(f"{label}: built against {was}, this runtime has {is_}")
+
+    # CUDA needs its own rule. ``torch.version.cuda`` is None for a CPU-only
+    # torch, and that is a definite answer, not a missing one — a CPU build
+    # ships no libcudart, so it cannot load an extension compiled against CUDA.
+    # Treating it as "unknown" is how a guaranteed ImportError once passed as
+    # merely unverified. Note the torch comparison above cannot catch this
+    # either: 2.11.0+cu128 and 2.11.0+cpu are the same release, differing only
+    # in the local tag that _short() drops.
+    was_cuda, is_cuda = meta.get("cuda"), now.get("cuda")
+    torch_here = now.get("torch") is not None
+    if was_cuda and not is_cuda and torch_here:
+        reasons.append(f"CUDA: wheel needs CUDA {was_cuda}, but this runtime's "
+                       f"torch ({now['torch']}) is CPU-only — no GPU attached?")
+    elif was_cuda and is_cuda:
+        if _short(was_cuda) != _short(is_cuda):
+            reasons.append(f"CUDA: built against {was_cuda}, "
+                           f"this runtime has {is_cuda}")
+    elif not torch_here:
+        unchecked.append("CUDA")
     if reasons:
         return False, reasons
     if unchecked:
