@@ -51,6 +51,20 @@ def dunder_version() -> str:
     raise SystemExit("could not find __version__ in cvenv/__init__.py")
 
 
+def notebook_pins() -> list[tuple[str, str]]:
+    """``(notebook, pinned_version)`` for every ``cvenv@vX.Y.Z`` in the notebooks.
+
+    The notebooks install cvenv from GitHub at a pinned tag, so a release that
+    forgets to bump them silently hands clients the previous version — which is
+    how v0.1.7 kept being installed after v0.1.8 shipped.
+    """
+    pins = []
+    for nb in sorted((ROOT / "notebooks").glob("*.ipynb")):
+        for m in re.finditer(r"cvenv@v(\d+\.\d+\.\d+)", nb.read_text()):
+            pins.append((nb.name, m.group(1)))
+    return pins
+
+
 def tag_at_head() -> str | None:
     try:
         out = subprocess.run(["git", "describe", "--tags", "--exact-match"],
@@ -63,16 +77,23 @@ def tag_at_head() -> str | None:
 def main(argv: list[str]) -> int:
     pyproj, dunder = pyproject_version(), dunder_version()
     tag = argv[1] if len(argv) > 1 else tag_at_head()
+    pins = notebook_pins()
 
-    print(f"pyproject.toml      {pyproj}")
-    print(f"cvenv/__init__.py   {dunder}")
+    width = max([18] + [len(n) for n, _ in pins])
+    print(f"{'pyproject.toml':<{width}}  {pyproj}")
+    print(f"{'cvenv/__init__.py':<{width}}  {dunder}")
+    for name, ver in pins:
+        print(f"{name:<{width}}  {ver}")
     if tag:
-        print(f"git tag             {tag}")
+        print(f"{'git tag':<{width}}  {tag}")
 
     problems = []
     if pyproj != dunder:
         problems.append(f"pyproject.toml says {pyproj}, "
                         f"cvenv/__init__.py says {dunder}")
+    for name, ver in pins:
+        if ver != pyproj:
+            problems.append(f"{name} installs cvenv@v{ver}, but the code is {pyproj}")
     if tag and tag.lstrip("v") != pyproj:
         problems.append(f"tag {tag} does not match the code version {pyproj}")
 
