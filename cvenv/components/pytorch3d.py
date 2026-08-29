@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 
 from ..base import Component, register
+from .science import NUMPY_PIN
 
 
 @contextlib.contextmanager
@@ -337,7 +338,7 @@ class PyTorch3D(Component):
         print(f"Building a PyTorch3D wheel from source (ref={ref}); "
               "this can take several minutes…")
         # Build-time prerequisites (harmless if already satisfied).
-        pip_install("numpy>=2.0,<2.1", check=False)
+        pip_install(NUMPY_PIN, check=False)
         pip_install("iopath", check=False)
         pip_install("ninja", extra_args=["--root-user-action", "ignore"], check=False)
 
@@ -434,7 +435,7 @@ class PyTorch3D(Component):
         from .._pip import pip_install
 
         # Keep numpy-2 ABI intact (see the `science` component's note).
-        pip_install("numpy>=2.0,<2.1", check=False)
+        pip_install(NUMPY_PIN, check=False)
         pip_install("iopath", check=False)
 
         if from_source:

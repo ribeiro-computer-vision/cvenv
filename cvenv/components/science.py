@@ -3,9 +3,13 @@
 Lesson baked in: on modern Colab / Lightning Studio the whole stack is numpy-2
 native, and their preinstalled compiled packages (cv2, scipy, …) are built
 against numpy 2.x. Downgrading numpy below 2.0 then breaks them with
-"numpy.dtype size changed, Expected 96 ... got 88". ``numpy>=2.0,<2.1`` is the
-universal pin that satisfies numba (needs <2.1 on Colab), the numpy-2 packages,
-and torch/pytorch3d.
+"numpy.dtype size changed, Expected 96 ... got 88". ``numpy>=2.0,<2.1`` satisfies
+numba (needs <2.1 on older Colab), the numpy-2 packages, and torch/pytorch3d.
+
+That upper bound is unusable on Python 3.13, though: NumPy only gained 3.13
+support in 2.1.0, so ``<2.1`` has no cp313 wheel and pip silently falls back to
+compiling NumPy from source — minutes of build, or a failure. The pin is
+therefore chosen per interpreter.
 
 This component is also the base for pure-numpy/scipy course material (e.g. Kalman
 filtering, Lie groups) — those need nothing beyond this stack.
@@ -13,9 +17,14 @@ filtering, Lie groups) — those need nothing beyond this stack.
 
 from __future__ import annotations
 
+import sys
+
 from ..base import Component, register
 
-NUMPY_PIN = "numpy>=2.0,<2.1"
+# NumPy 2.0.x has no cp313 wheel — 3.13 support arrived in 2.1.0. Asking for
+# <2.1 there triggers a source build, so only apply the upper bound where a
+# wheel actually exists.
+NUMPY_PIN = "numpy>=2.0,<2.1" if sys.version_info < (3, 13) else "numpy>=2.1"
 
 STACK = [
     NUMPY_PIN,
