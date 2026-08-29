@@ -1,0 +1,22 @@
+name: version check
+
+# The version lives in pyproject.toml and in cvenv/__init__.py, and nothing
+# else keeps them in step. On a tag push this also checks the tag matches.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  versions-agree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # tags, so the tag/code comparison can run
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python3 tools/check_version.py
