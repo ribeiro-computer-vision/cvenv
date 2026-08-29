@@ -127,6 +127,13 @@ def wheel_sidecar(whl: str) -> str:
     return whl + SIDECAR_SUFFIX
 
 
+def _sidecar_url(url: str) -> str:
+    """Where the sidecar would live next to a wheel URL, keeping any query
+    string (Dropbox share links carry ``?dl=1`` and drop it at their peril)."""
+    parts = urlparse(url)
+    return urlunparse(parts._replace(path=parts.path + SIDECAR_SUFFIX))
+
+
 def build_env() -> dict:
     """What the current runtime would build against (or needs to match)."""
     env = {
@@ -235,7 +242,7 @@ class PyTorch3D(Component):
         """Return a local .whl path. Downloads remote URLs first (reliable for
         Dropbox), validating the file is really a zip/wheel and not an HTML
         error page."""
-        # already a local file?
+        # already a local file? the sidecar, if any, already sits beside it
         if os.path.exists(wheel_url):
             return Path(wheel_url)
 
@@ -247,6 +254,25 @@ class PyTorch3D(Component):
         dest = Path(tempfile.gettempdir()) / name
         print(f"⬇️  downloading wheel: {name}")
         download_resumable(url, dest)
+
+        # Bring the provenance sidecar along so the wheel can be checked against
+        # this runtime. Deliberately NOT download_resumable: a missing sidecar
+        # is the normal case (any wheel not built by a recent cvenv), and its
+        # retry/backoff would spend a minute and print warnings over an optional
+        # file. One short attempt, no retries, silent on failure. Some hosts
+        # answer an unknown path with an HTML page instead of a 404, so keep the
+        # result only if it parses as our metadata.
+        side = Path(str(dest) + SIDECAR_SUFFIX)
+        try:
+            import urllib.request
+            with urllib.request.urlopen(_sidecar_url(url), timeout=10) as resp:
+                side.write_bytes(resp.read(64_000))       # metadata is tiny
+            if read_wheel_metadata(str(dest)):
+                print("   ↳ fetched build provenance alongside the wheel")
+            else:
+                side.unlink(missing_ok=True)
+        except Exception:
+            side.unlink(missing_ok=True)
 
         # sanity: a wheel is a zip → starts with 'PK'; an HTML error page is not
         with open(dest, "rb") as f:
@@ -419,6 +445,23 @@ class PyTorch3D(Component):
 
         if wheel_url:
             local = self._fetch_wheel(wheel_url)
+
+            # If provenance travelled with the wheel, say now whether it can
+            # work here — otherwise the only symptom is an undefined-symbol
+            # error after a install. Warn rather than refuse: the
+            # sidecar is evidence, not proof, and could itself be stale.
+            verdict, reasons = wheel_compatibility(str(local))
+            mismatch = reasons if verdict is False else []
+            if verdict is False:
+                print(f"⚠️  {local.name} was built for a different runtime:")
+                for r in mismatch:
+                    print(f"      • {r}")
+                print("   Installing anyway, but expect 'import pytorch3d._C' to fail.")
+            elif verdict is True:
+                meta = read_wheel_metadata(str(local)) or {}
+                print(f"   provenance matches: built against torch "
+                      f"{meta.get('torch')} / CUDA {meta.get('cuda')}")
+
             print(f"Installing PyTorch3D from wheel: {local.name}")
             pip_install(str(local), extra_args=["--force-reinstall", "--no-deps"],
                         check=False)
@@ -432,7 +475,8 @@ class PyTorch3D(Component):
                 f"    {_c_import_error()}\n"
                 f"Runtime: {_runtime_desc()}\n"
                 f"Wheel:   {local.name}\n"
-                "Most likely the wheel's torch/CUDA build doesn't match this "
+                + ("".join(f"Recorded: {r}\n" for r in mismatch) if mismatch else "")
+                + "Most likely the wheel's torch/CUDA build doesn't match this "
                 "runtime. Rebuild the wheel against the runtime's torch/CUDA, or "
                 "pass from_source=True to build here.")
 
