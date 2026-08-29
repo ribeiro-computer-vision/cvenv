@@ -12,6 +12,11 @@ Install components individually or in bulk, from a notebook or the CLI:
 """
 
 from .platform import PlatformManager
+from .components.pytorch3d import (
+    read_wheel_metadata,
+    wheel_compatibility,
+    wheel_sidecar,
+)
 from .base import (
     Component,
     REGISTRY,
@@ -21,7 +26,7 @@ from .base import (
     setup,
 )
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 __all__ = [
     "PlatformManager",
@@ -31,5 +36,8 @@ __all__ = [
     "get_component",
     "list_components",
     "setup",
+    "read_wheel_metadata",
+    "wheel_compatibility",
+    "wheel_sidecar",
     "__version__",
 ]

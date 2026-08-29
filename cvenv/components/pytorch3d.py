@@ -111,6 +111,99 @@ def _default_wheel_dir(platform=None) -> str:
     return os.path.join(os.path.expanduser("~"), ".cvenv", "wheels")
 
 
+# -- wheel provenance ------------------------------------------------------
+#
+# A wheel filename records the python tag and platform, but NOT torch or CUDA
+# — yet a pytorch3d ``_C`` extension is linked against both. A wheel that
+# survives in Drive while the runtime's torch moves under it still *installs*,
+# then fails at ``import pytorch3d._C`` with an undefined symbol. So each built
+# wheel gets a sidecar recording what it was built against.
+
+SIDECAR_SUFFIX = ".build.json"
+
+
+def wheel_sidecar(whl: str) -> str:
+    """Path of the metadata file recorded beside ``whl``."""
+    return whl + SIDECAR_SUFFIX
+
+
+def build_env() -> dict:
+    """What the current runtime would build against (or needs to match)."""
+    env = {
+        "python_tag": f"cp{sys.version_info.major}{sys.version_info.minor}",
+        "python": ".".join(str(v) for v in sys.version_info[:3]),
+        "torch": None,
+        "cuda": None,
+    }
+    try:
+        import torch
+        env["torch"] = torch.__version__
+        env["cuda"] = torch.version.cuda
+    except Exception:
+        pass
+    return env
+
+
+def read_wheel_metadata(whl: str):
+    """Metadata recorded beside ``whl``, or ``None`` if there is none."""
+    import json
+    try:
+        with open(wheel_sidecar(whl)) as fh:
+            return json.load(fh)
+    except Exception:
+        return None
+
+
+def _write_wheel_metadata(whl: str, **extra) -> None:
+    import json
+    from datetime import datetime, timezone
+    meta = build_env()
+    meta["built"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    meta.update({k: v for k, v in extra.items() if v is not None})
+    try:
+        with open(wheel_sidecar(whl), "w") as fh:
+            json.dump(meta, fh, indent=2, sort_keys=True)
+    except Exception as e:                                   # never fail a build
+        print(f"   (could not record build metadata: {e})")
+
+
+def _short(v):
+    """major.minor of a version string; extensions are tied to that, not the patch."""
+    return ".".join(str(v).split("+")[0].split(".")[:2]) if v else v
+
+
+def wheel_compatibility(whl: str):
+    """Is ``whl`` usable in this runtime?
+
+    Returns ``(verdict, reasons)`` where verdict is True (matches), False
+    (provably not), or None (no metadata recorded — unknowable from the
+    filename alone). Compares torch and CUDA at major.minor, since that is the
+    granularity at which a compiled extension stays loadable.
+    """
+    meta = read_wheel_metadata(whl)
+    now = build_env()
+    if not meta:
+        return None, ["no build metadata recorded beside this wheel"]
+
+    reasons, unchecked = [], []
+    for key, label in (("python_tag", "python"), ("torch", "torch"), ("cuda", "CUDA")):
+        was, is_ = meta.get(key), now.get(key)
+        if was is None or is_ is None:
+            unchecked.append(label)
+            continue
+        same = was == is_ if key == "python_tag" else _short(was) == _short(is_)
+        if not same:
+            reasons.append(f"{label}: built against {was}, this runtime has {is_}")
+    if reasons:
+        return False, reasons
+    if unchecked:
+        # Everything comparable matched, but something could not be compared —
+        # say so rather than claim a clean match.
+        return None, [f"could not compare {', '.join(unchecked)} "
+                      "(not recorded, or not importable here)"]
+    return True, []
+
+
 def _c_import_error() -> str:
     try:
         import torch  # noqa: F401
@@ -191,10 +284,29 @@ class PyTorch3D(Component):
         existing = glob.glob(os.path.join(out_dir, "pytorch3d-*.whl"))
         if existing and not force:
             whl = max(existing, key=os.path.getmtime)
-            print(f"✅ reusing existing wheel: {whl}\n"
-                  "   (a wheel only matches the torch/CUDA/python it was built "
-                  "against — pass force=True / --force to rebuild for this runtime.)")
-            return whl
+            verdict, reasons = wheel_compatibility(whl)
+            if verdict is False:
+                # Recorded metadata proves this wheel cannot load here. Reusing
+                # it would install cleanly and then fail at `import
+                # pytorch3d._C`, so rebuild rather than hand back a dud.
+                print(f"⚠️  not reusing {os.path.basename(whl)} — built for a "
+                      "different runtime:")
+                for r in reasons:
+                    print(f"      • {r}")
+                print("   Rebuilding for this runtime.")
+            elif verdict is None:
+                print(f"✅ reusing existing wheel: {whl}\n"
+                      f"   ({reasons[0]}; it is only valid where python, torch and "
+                      "CUDA all match the machine it was built on — pass "
+                      "force=True / --force to rebuild.)")
+                return whl
+            else:
+                meta = read_wheel_metadata(whl) or {}
+                print(f"✅ reusing existing wheel: {whl}\n"
+                      f"   (built {meta.get('built', '?')} against torch "
+                      f"{meta.get('torch')} / CUDA {meta.get('cuda')} — matches "
+                      "this runtime.)")
+                return whl
 
         print(f"Building a PyTorch3D wheel from source (ref={ref}); "
               "this can take several minutes…")
@@ -263,7 +375,11 @@ class PyTorch3D(Component):
         # prefer a freshly-produced wheel; fall back to newest overall
         fresh = [w for w in whls if w not in before]
         whl = max(fresh or whls, key=os.path.getmtime)
-        print(f"💾 saved reusable wheel: {whl}")
+        _write_wheel_metadata(whl, ref=ref,
+                              arch_list=os.environ.get("TORCH_CUDA_ARCH_LIST"),
+                              cuda_home=os.environ.get("CUDA_HOME"))
+        print(f"💾 saved reusable wheel: {whl}\n"
+              f"   provenance recorded in {os.path.basename(wheel_sidecar(whl))}")
         return whl
 
     def _source_build(self, wheel_out_dir=None, platform=None, **kw) -> None:
