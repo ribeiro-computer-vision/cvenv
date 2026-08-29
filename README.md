@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.7"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.10"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.7"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.10"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -51,7 +51,7 @@ cvenv.get_component("pytorch3d").verify()     # sanity check
 
 | name        | what it installs |
 |-------------|------------------|
-| `science`   | numpy (pinned `>=2.0,<2.1`), scipy, matplotlib, pandas, scikit-image, scikit-learn, opencv, pillow, tqdm, imageio, colorama. Base for pure-numpy/scipy material (Kalman, Lie groups). |
+| `science`   | numpy (pinned `>=2.0,<2.1`, or `>=2.1` on Python 3.13+), scipy, matplotlib, pandas, scikit-image, scikit-learn, opencv, pillow, tqdm, imageio, colorama. Base for pure-numpy/scipy material (Kalman, Lie groups). |
 | `opengl`    | PyOpenGL + system GL/GLUT dev libs (for pyrender / rendering). |
 | `pytorch3d` | Facebook PyTorch3D — prebuilt wheel if possible, else source build. Depends on `opengl`. |
 | `mast3r`    | NAVER MASt3R (clone repo, install deps, fetch checkpoint). |
@@ -98,7 +98,32 @@ cvenv build-wheel pytorch3d --wheel-out-dir ./wheels
 A wheel is valid **only** where python (cp), torch, and CUDA match the machine it was
 built on — so build it on (or identically to) the runtime you'll use it on.
 `build_wheel` is **idempotent**: it reuses an existing wheel in the output dir; pass
-`force=True` / `--force` to rebuild (e.g. after the runtime's torch/CUDA changed).
+`force=True` / `--force` to rebuild it anyway.
+
+### Wheel provenance
+
+A wheel filename records the python tag and platform but **not** torch or CUDA,
+even though the compiled `_C` extension is linked against both. So a wheel left in
+Drive still installs cleanly after a runtime's torch moves under it, then fails at
+`import pytorch3d._C` with an undefined symbol.
+
+Each built wheel therefore gets a `<wheel>.build.json` sidecar recording what it was
+compiled against, and cvenv checks it:
+
+```python
+cvenv.wheel_compatibility(whl)   # (True | False | None, reasons)
+cvenv.read_wheel_metadata(whl)   # python / torch / CUDA / arch / timestamp
+```
+
+- `build_wheel` will **not** hand back a wheel the sidecar proves cannot load here —
+  it explains which of python/torch/CUDA differs and rebuilds instead.
+- `install(wheel_url=...)` reports compatibility *before* installing, and fetches the
+  sidecar alongside a remote wheel.
+- Wheels built before this existed have no sidecar and are reported as *unverified* —
+  reused as before, since absence of evidence isn't evidence of a mismatch.
+
+**If you copy or share a wheel, take the sidecar with it**; without it the check
+degrades to *unverified*.
 
 ## CLI reference
 
@@ -133,13 +158,18 @@ be set up first.
 - **`cvenv_create_pytorch3d_wheel.ipynb`** — build a PyTorch3D wheel matching the
   current runtime, save it to Drive, and install it. Run this **once** when a runtime
   has no working wheel; afterwards every session reuses the saved `.whl` in seconds.
-  Shows both the Python (`build_wheel`) and CLI (`cvenv build-wheel`) paths.
+  A `FORCE_REBUILD` flag chooses between reusing and recompiling, and the cell above
+  it reports any wheel already saved, with what it was built against.
 
 ## Notes
 
-- **numpy**: modern Colab/Studio are numpy-2 native. `cvenv` pins `numpy>=2.0,<2.1`
-  and warns you to restart the kernel if numpy changed mid-session — installing
-  `numpy<2` breaks the ABI of preinstalled cv2/scipy.
+- **numpy**: modern Colab/Studio are numpy-2 native, and installing `numpy<2`
+  breaks the ABI of their preinstalled cv2/scipy. `cvenv` pins `numpy>=2.0,<2.1`
+  — the window that also satisfies numba — and warns you to restart the kernel if
+  numpy changed mid-session. **On Python 3.13+ the pin is `numpy>=2.1`**: NumPy
+  gained 3.13 support in 2.1.0, so asking for `<2.1` there has no wheel and pip
+  silently compiles NumPy from source, which looks exactly like the slow source
+  build a prebuilt wheel is meant to avoid.
 - **torch** is intentionally *not* a default component (it's preinstalled on
   Colab/Studio/RunPod, and reinstalling it is risky).
 - **PyTorch3D** verification always tests `import pytorch3d._C`, not just

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Check that the version agrees everywhere before a release.
 
-cvenv carries its version in two places — ``pyproject.toml`` and
-``cvenv/__init__.py`` — and nothing enforces that they match. They drifted
-once: v0.1.8 was bumped in ``__init__.py`` only, which would have shipped a
-release where pip reported 0.1.7 and ``cvenv.__version__`` reported 0.1.8.
+cvenv writes its version by hand in several places — ``pyproject.toml``,
+``cvenv/__init__.py``, the ``cvenv@vX.Y.Z`` install pin in each notebook, and the
+same pin in the README — and nothing else keeps them in step. Both halves of that
+have already gone wrong: v0.1.8 was bumped in ``__init__.py`` only, and the
+notebook pins were left at v0.1.7 for two releases, quietly installing old code.
 
 Usage
 -----
-    python3 tools/check_version.py            # the two files agree
+    python3 tools/check_version.py            # every version agrees
     python3 tools/check_version.py v0.1.8     # ...and the tag matches too
 
 With no argument, a tag pointing at HEAD is checked if there is one.
@@ -51,18 +52,24 @@ def dunder_version() -> str:
     raise SystemExit("could not find __version__ in cvenv/__init__.py")
 
 
-def notebook_pins() -> list[tuple[str, str]]:
-    """``(notebook, pinned_version)`` for every ``cvenv@vX.Y.Z`` in the notebooks.
+def install_pins() -> list[tuple[str, str]]:
+    """``(file, pinned_version)`` for every ``cvenv@vX.Y.Z`` that tells someone
+    which version to install.
 
-    The notebooks install cvenv from GitHub at a pinned tag, so a release that
-    forgets to bump them silently hands clients the previous version — which is
-    how v0.1.7 kept being installed after v0.1.8 shipped.
+    The notebooks and the README all install cvenv from GitHub at a pinned tag,
+    so a release that forgets to bump them silently hands people the previous
+    version — which is how v0.1.7 kept being installed after v0.1.8 shipped.
     """
+    files = sorted((ROOT / "notebooks").glob("*.ipynb")) + [ROOT / "README.md"]
     pins = []
-    for nb in sorted((ROOT / "notebooks").glob("*.ipynb")):
-        for m in re.finditer(r"cvenv@v(\d+\.\d+\.\d+)", nb.read_text()):
-            pins.append((nb.name, m.group(1)))
-    return pins
+    for f in files:
+        if not f.exists():
+            continue
+        for m in re.finditer(r"cvenv@v(\d+\.\d+\.\d+)", f.read_text()):
+            pins.append((f.name, m.group(1)))
+    # A file may pin the same version several times; collapse those to one row,
+    # while still surfacing a file whose own pins disagree with each other.
+    return sorted(set(pins))
 
 
 def tag_at_head() -> str | None:
@@ -89,7 +96,7 @@ def tag_at_head() -> str | None:
 def main(argv: list[str]) -> int:
     pyproj, dunder = pyproject_version(), dunder_version()
     tag = argv[1] if len(argv) > 1 else tag_at_head()
-    pins = notebook_pins()
+    pins = install_pins()
 
     width = max([18] + [len(n) for n, _ in pins])
     print(f"{'pyproject.toml':<{width}}  {pyproj}")
@@ -105,7 +112,8 @@ def main(argv: list[str]) -> int:
                         f"cvenv/__init__.py says {dunder}")
     for name, ver in pins:
         if ver != pyproj:
-            problems.append(f"{name} installs cvenv@v{ver}, but the code is {pyproj}")
+            problems.append(f"{name} tells people to install cvenv@v{ver}, "
+                            f"but the code is {pyproj}")
     if tag and tag.lstrip("v") != pyproj:
         problems.append(f"tag {tag} does not match the code version {pyproj}")
 
