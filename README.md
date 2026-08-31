@@ -53,7 +53,7 @@ cvenv.get_component("pytorch3d").verify()     # sanity check
 |-------------|------------------|
 | `science`   | numpy (pinned `>=2.0,<2.1`, or `>=2.1` on Python 3.13+), scipy, matplotlib, pandas, scikit-image, scikit-learn, opencv, pillow, tqdm, imageio, colorama. Base for pure-numpy/scipy material (Kalman, Lie groups). |
 | `opengl`    | PyOpenGL + system GL/GLUT dev libs (for pyrender / rendering). |
-| `pytorch3d` | Facebook PyTorch3D — prebuilt wheel if possible, else source build. Depends on `opengl`. |
+| `pytorch3d` | Facebook PyTorch3D — prebuilt wheel if possible, else source build. `verify()` rasterizes a triangle on the GPU, so an architecture mismatch shows up here rather than at your first render. Depends on `opengl`. |
 | `mast3r`    | NAVER MASt3R (clone repo, install deps, fetch checkpoint). |
 | `sam2`      | Meta Segment Anything 2 (pip install + checkpoint download). |
 
@@ -99,6 +99,54 @@ A wheel is valid **only** where python (cp), torch, and CUDA match the machine i
 built on — so build it on (or identically to) the runtime you'll use it on.
 `build_wheel` is **idempotent**: it reuses an existing wheel in the output dir; pass
 `force=True` / `--force` to rebuild it anyway.
+
+### GPU architecture, and why the default ends in `+PTX`
+
+A wheel also carries **native GPU code only for the architectures it was compiled
+for**. That is a separate axis from python/torch/CUDA, and it bites on any platform
+that hands out different hardware between sessions: a wheel built when Colab gave
+you an L4 (`sm_89`) dies on the next session's T4 (`sm_75`) with
+
+```
+CUDA error: no kernel image is available for execution on the device
+(cudaErrorNoKernelImageForDevice)
+```
+
+`build_wheel` therefore targets **one architecture plus `+PTX`**:
+
+- **one** `-gencode` target, because several is what provokes pulsar's
+  `undefined reference … <true>` link failure;
+- **`+PTX`**, which adds a portable image the driver JIT-compiles on demand.
+
+PTX is **forward-only** — `compute_75` PTX runs on `sm_80/86/89/90`, but nothing
+older. A wheel is portable across a fleet only if built for the fleet's *oldest*
+member, so where the platform's floor is known cvenv targets that rather than
+whatever card is attached right now:
+
+| Platform | Default target | Covers |
+|----------|----------------|--------|
+| Colab    | `7.5+PTX` (T4) | T4 natively; A100 / L4 / H100 by JIT |
+| other    | detected capability `+PTX` | that GPU natively; newer by JIT |
+
+When the floor differs from the attached GPU the build says so. Override with
+`arch_list=...`, which is used verbatim:
+
+```python
+whl = cvenv.get_component("pytorch3d").build_wheel(arch_list="8.0+PTX", force=True)
+```
+
+Check what actually went into a built extension:
+
+```python
+import glob, os, pytorch3d
+so = glob.glob(os.path.dirname(pytorch3d.__file__) + "/_C*.so")[0]
+!cuobjdump --list-elf {so}    # native architectures
+!cuobjdump --list-ptx {so}    # the PTX that makes newer GPUs work
+```
+
+JIT costs a few seconds at the first kernel launch on a non-native GPU, and the
+session is ephemeral, so you may pay it once per session. That is the price of one
+wheel that works everywhere.
 
 ### Wheel provenance
 
