@@ -112,6 +112,22 @@ def _default_wheel_dir(platform=None) -> str:
     return os.path.join(os.path.expanduser("~"), ".cvenv", "wheels")
 
 
+# -- GPU architecture ------------------------------------------------------
+#
+# A wheel carries native code only for the architectures it was compiled for,
+# so one built on an L4 dies on a T4 with cudaErrorNoKernelImageForDevice. The
+# cure is "+PTX": an extra portable image the driver JIT-compiles on demand.
+#
+# PTX is FORWARD-only — compute_75 PTX runs on sm_80/86/89/90, but nothing
+# older. So a wheel is portable across a fleet only if it is built for the
+# fleet's OLDEST member. Where we know what a platform hands out, default to
+# that floor rather than to whatever GPU happens to be attached right now.
+
+_PLATFORM_ARCH_FLOOR = {
+    "Colab": "7.5",        # T4 is the oldest Colab commonly assigns
+}
+
+
 # -- wheel provenance ------------------------------------------------------
 #
 # A wheel filename records the python tag and platform, but NOT torch or CUDA
@@ -317,10 +333,13 @@ class PyTorch3D(Component):
         existing wheel came from a different runtime, rebuild with ``force=True``.
 
         ``cuda_home`` overrides ``CUDA_HOME`` (must match torch's CUDA build, or
-        pulsar fails to link). ``arch_list`` sets ``TORCH_CUDA_ARCH_LIST``; if
-        unset it defaults to the **running GPU's** compute capability (a single
-        arch — building for many ``-gencode`` targets is a common cause of the
-        pulsar ``undefined reference … <true>`` link failure).
+        pulsar fails to link). ``arch_list`` sets ``TORCH_CUDA_ARCH_LIST`` and is
+        used verbatim; if unset it defaults to a single architecture plus
+        ``+PTX`` — the platform's oldest GPU where that is known (Colab: 7.5, a
+        T4), else the running GPU's capability. One ``-gencode`` target keeps
+        the pulsar ``undefined reference … <true>`` link failure away, while the
+        PTX image lets the driver JIT for any newer GPU, so the wheel survives
+        being handed different hardware next session.
         """
         from .._pip import pip_install, run
 
@@ -371,19 +390,39 @@ class PyTorch3D(Component):
         elif os.path.isdir("/usr/local/cuda"):
             os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
 
-        # Build for a SINGLE GPU arch. Prefer an explicit arch_list, else the
-        # running GPU's compute capability. This intentionally OVERRIDES any
-        # ambient TORCH_CUDA_ARCH_LIST — Lightning Studio presets it to every
-        # arch, which slows the build and aggravates the pulsar link issue.
-        arch = arch_list
+        # Build for a SINGLE GPU arch, plus PTX. One -gencode target keeps the
+        # pulsar link happy (several is what provokes its "undefined reference
+        # ... <true>" failure); "+PTX" then makes that one target portable to
+        # newer GPUs. This intentionally OVERRIDES any ambient
+        # TORCH_CUDA_ARCH_LIST — Lightning Studio presets it to every arch,
+        # which slows the build and aggravates the pulsar link issue.
+        arch = arch_list                      # explicit wins, used verbatim
         if not arch:
+            detected = None
             try:
                 import torch
                 if torch.cuda.is_available():
-                    maj, mn = torch.cuda.get_device_capability(0)
-                    arch = f"{maj}.{mn}"
+                    detected = "%d.%d" % torch.cuda.get_device_capability(0)
             except Exception:
-                arch = None
+                pass
+
+            if platform is None:
+                try:
+                    from ..platform import PlatformManager
+                    platform = PlatformManager().platform
+                except Exception:
+                    platform = None
+            floor = _PLATFORM_ARCH_FLOOR.get(platform)
+
+            base = floor or detected
+            if base:
+                arch = base if base.upper().endswith("+PTX") else base + "+PTX"
+                if floor and detected and floor != detected:
+                    print(f"   targeting sm_{floor.replace('.', '')} + PTX rather "
+                          f"than this GPU's sm_{detected.replace('.', '')}, so the "
+                          f"wheel also runs on the oldest GPU {platform} assigns.\n"
+                          f"   Newer GPUs are covered by PTX JIT. Override with "
+                          f"arch_list=...")
         if not arch:
             arch = os.environ.get("TORCH_CUDA_ARCH_LIST")
         if arch:
