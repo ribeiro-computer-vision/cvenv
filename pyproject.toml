@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cvenv"
-version = "0.1.13"
+version = "0.1.14"
 description = "À-la-carte environment installer for computer-vision / ML courses and projects (PyTorch3D, MASt3R, SAM2, and the science stack)."
 readme = "README.md"
 requires-python = ">=3.9"

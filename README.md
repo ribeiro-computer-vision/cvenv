@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.13"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.14"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.13"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.14"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -170,6 +170,11 @@ cvenv.read_wheel_metadata(whl)   # python / torch / CUDA / arch / timestamp
   installed.
 - `install(wheel_url=...)` reports compatibility *before* installing, and fetches the
   sidecar alongside a remote wheel.
+- `install()` skips work only when the existing install is genuinely **usable**:
+  `is_installed()` runs a CUDA kernel, not just `import pytorch3d._C`. A wheel built
+  for another GPU imports fine, so the weaker test used to report "already installed
+  — skipping" and leave the broken wheel in place while a freshly built one sat
+  unused.
 - Wheels built before this existed have no sidecar and are reported as *unverified* —
   reused as before, since absence of evidence isn't evidence of a mismatch.
 

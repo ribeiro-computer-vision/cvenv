@@ -315,6 +315,53 @@ def wheel_compatibility(whl: str):
     return True, []
 
 
+_KERNEL_PROBE = {}          # cache: the probe compiles PTX on first run
+
+
+def _cuda_kernels_ok():
+    """Can this install actually *run* a CUDA kernel here?
+
+    Returns (ok, detail). ``ok`` is True when a kernel ran, or when there is no
+    GPU to run one on (nothing to disprove). False means the extension loaded
+    but its compiled kernels do not match this GPU — the
+    cudaErrorNoKernelImageForDevice case, which ``import pytorch3d._C`` cannot
+    detect because loading a shared object never launches anything.
+
+    Cached: the first call may JIT-compile PTX, and callers hit this repeatedly.
+    """
+    if "result" in _KERNEL_PROBE:
+        return _KERNEL_PROBE["result"]
+
+    result = (True, "no GPU in this runtime — CUDA kernels not checked")
+    try:
+        import torch
+        if torch.cuda.is_available():
+            from pytorch3d.structures import Meshes
+            from pytorch3d.renderer.mesh.rasterize_meshes import rasterize_meshes
+            verts = torch.tensor([[[-1.0, -1.0, 2.0],
+                                   [ 1.0, -1.0, 2.0],
+                                   [ 0.0,  1.0, 2.0]]], device="cuda")
+            faces = torch.tensor([[[0, 1, 2]]], dtype=torch.int64, device="cuda")
+            rasterize_meshes(Meshes(verts=verts, faces=faces),
+                             image_size=16, blur_radius=0.0, faces_per_pixel=1)
+            torch.cuda.synchronize()
+            name = torch.cuda.get_device_name(0)
+            cap = "%d%d" % torch.cuda.get_device_capability(0)
+            result = (True, f"CUDA kernels run on {name} (sm_{cap})")
+    except RuntimeError as e:
+        msg = str(e)
+        if "no kernel image" in msg or "NoKernelImage" in msg:
+            result = (False, msg)
+        else:
+            result = (False, f"{type(e).__name__}: {e}")
+    except Exception as e:
+        # A problem with the probe itself must not condemn a working install.
+        result = (True, f"could not run the CUDA kernel check ({type(e).__name__}: {e})")
+
+    _KERNEL_PROBE["result"] = result
+    return result
+
+
 def _c_import_error() -> str:
     try:
         import torch  # noqa: F401
@@ -338,7 +385,13 @@ class PyTorch3D(Component):
     requires = ["opengl"]
 
     def is_installed(self) -> bool:
-        return _c_import_error() == ""
+        # Importing _C is not enough. A wheel compiled for another GPU imports
+        # perfectly and dies at the first kernel, so treating it as installed
+        # made install() print "already installed — skipping" and leave the
+        # broken wheel in place — the rebuilt one never got installed.
+        if _c_import_error() != "":
+            return False
+        return _cuda_kernels_ok()[0]
 
     # -- helpers -----------------------------------------------------------
 
@@ -626,65 +679,49 @@ class PyTorch3D(Component):
         import pytorch3d
         import pytorch3d._C  # noqa: F401
         print(f"✅ pytorch3d {pytorch3d.__version__} (_C OK)")
-        return self._verify_cuda_kernels()
 
-    @staticmethod
-    def _verify_cuda_kernels() -> bool:
-        """Launch one real CUDA kernel.
-
-        Importing ``_C`` only proves the shared object loads; it never runs a
-        kernel. A wheel built for another GPU architecture imports perfectly
-        and then dies at the first rasterization with
-        ``cudaErrorNoKernelImageForDevice`` — often many cells later, inside a
-        renderer, where the message says nothing about wheels. Rasterizing a
-        single triangle here moves that failure to install time and lets us name
-        the cause.
-        """
-        import torch
-        if not torch.cuda.is_available():
-            print("   ℹ️  no GPU in this runtime — CUDA kernels not checked.")
+        ok, detail = _cuda_kernels_ok()
+        if ok:
+            print(f"   {'ℹ️ ' if 'no GPU' in detail or 'could not' in detail else '✅'} {detail}")
             return True
 
-        name = torch.cuda.get_device_name(0)
-        cap = "%d.%d" % torch.cuda.get_device_capability(0)
+        # The kernels do not match this GPU. Say what to do about it, and make
+        # the target concrete rather than leaving the reader to work out that
+        # PTX only helps newer hardware.
+        cap = _current_capability()
+        here = _sm(cap) if cap else "this GPU"
+        name = ""
         try:
-            from pytorch3d.structures import Meshes
-            from pytorch3d.renderer.mesh.rasterize_meshes import rasterize_meshes
+            import torch
+            name = torch.cuda.get_device_name(0) + ", "
+        except Exception:
+            pass
 
-            verts = torch.tensor([[[-1.0, -1.0, 2.0],
-                                   [ 1.0, -1.0, 2.0],
-                                   [ 0.0,  1.0, 2.0]]], device="cuda")
-            faces = torch.tensor([[[0, 1, 2]]], dtype=torch.int64, device="cuda")
-            rasterize_meshes(Meshes(verts=verts, faces=faces),
-                             image_size=16, blur_radius=0.0, faces_per_pixel=1)
-            torch.cuda.synchronize()
-        except RuntimeError as e:
-            msg = str(e)
-            if "no kernel image" in msg or "NoKernelImage" in msg:
-                print(f"❌ pytorch3d imports, but its CUDA kernels do not run on "
-                      f"this GPU ({name}, sm_{cap.replace('.', '')}).\n"
-                      f"   The wheel was compiled for a different architecture.\n"
-                      f"   Rebuild once against the OLDEST GPU you expect, with "
-                      f"'+PTX'. PTX is JIT-compiled by the driver for anything\n"
-                      f"   newer, so a single wheel then covers the whole fleet:\n"
-                      f'       cvenv.get_component("pytorch3d")'
-                      f'.build_wheel(arch_list="7.5+PTX", force=True)\n'
-                      f"   (7.5 = T4, the oldest Colab commonly hands out; this "
-                      f"GPU is sm_{cap.replace('.', '')}. Building for {cap} "
-                      f"instead would\n"
-                      f"   run natively here but fail again on anything older.)\n"
-                      f"   Or simply pick a runtime whose GPU matches the wheel.")
-                return False
-            print(f"❌ pytorch3d CUDA check failed on {name}: {type(e).__name__}: {e}")
-            return False
-        except Exception as e:
-            # Never let a probe problem masquerade as a broken install.
-            print(f"   ⚠️  could not run the CUDA kernel check "
-                  f"({type(e).__name__}: {e}); _C imported fine.")
-            return True
+        floor = None
+        try:
+            from ..platform import PlatformManager
+            floor = _PLATFORM_ARCH_FLOOR.get(PlatformManager().platform)
+        except Exception:
+            pass
+        target = floor or ("%d.%d" % cap if cap else "7.5")
 
-        print(f"   ✅ CUDA kernels run on {name} (sm_{cap.replace('.', '')})")
-        return True
+        print(f"❌ pytorch3d imports, but its CUDA kernels do not run on this GPU "
+              f"({name}{here}).\n"
+              f"   The wheel was compiled for a different architecture.\n"
+              f"   Rebuild with '+PTX', which the driver JIT-compiles for anything "
+              f"NEWER — so target\n"
+              f"   the OLDEST GPU you expect and one wheel covers the rest:\n"
+              f'       cvenv.get_component("pytorch3d")'
+              f'.build_wheel(arch_list="{target}+PTX", force=True)\n'
+              f'       cvenv.get_component("pytorch3d")'
+              f'.install(wheel_url=whl, force=True)')
+        if floor and cap and floor != ("%d.%d" % cap):
+            print(f"   ({target} is the oldest GPU this platform assigns; you are on "
+                  f"{here}. Building\n"
+                  f"   for {'%d.%d' % cap} would run natively here but fail again on "
+                  f"anything older.)")
+        print("   Or pick a runtime whose GPU matches the wheel.")
+        return False
 
 
 register(PyTorch3D())
