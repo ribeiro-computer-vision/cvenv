@@ -519,6 +519,64 @@ class PyTorch3D(Component):
         import pytorch3d
         import pytorch3d._C  # noqa: F401
         print(f"✅ pytorch3d {pytorch3d.__version__} (_C OK)")
+        return self._verify_cuda_kernels()
+
+    @staticmethod
+    def _verify_cuda_kernels() -> bool:
+        """Launch one real CUDA kernel.
+
+        Importing ``_C`` only proves the shared object loads; it never runs a
+        kernel. A wheel built for another GPU architecture imports perfectly
+        and then dies at the first rasterization with
+        ``cudaErrorNoKernelImageForDevice`` — often many cells later, inside a
+        renderer, where the message says nothing about wheels. Rasterizing a
+        single triangle here moves that failure to install time and lets us name
+        the cause.
+        """
+        import torch
+        if not torch.cuda.is_available():
+            print("   ℹ️  no GPU in this runtime — CUDA kernels not checked.")
+            return True
+
+        name = torch.cuda.get_device_name(0)
+        cap = "%d.%d" % torch.cuda.get_device_capability(0)
+        try:
+            from pytorch3d.structures import Meshes
+            from pytorch3d.renderer.mesh.rasterize_meshes import rasterize_meshes
+
+            verts = torch.tensor([[[-1.0, -1.0, 2.0],
+                                   [ 1.0, -1.0, 2.0],
+                                   [ 0.0,  1.0, 2.0]]], device="cuda")
+            faces = torch.tensor([[[0, 1, 2]]], dtype=torch.int64, device="cuda")
+            rasterize_meshes(Meshes(verts=verts, faces=faces),
+                             image_size=16, blur_radius=0.0, faces_per_pixel=1)
+            torch.cuda.synchronize()
+        except RuntimeError as e:
+            msg = str(e)
+            if "no kernel image" in msg or "NoKernelImage" in msg:
+                print(f"❌ pytorch3d imports, but its CUDA kernels do not run on "
+                      f"this GPU ({name}, sm_{cap.replace('.', '')}).\n"
+                      f"   The wheel was compiled for a different architecture.\n"
+                      f"   Rebuild once against the OLDEST GPU you expect, with "
+                      f"'+PTX'. PTX is JIT-compiled by the driver for anything\n"
+                      f"   newer, so a single wheel then covers the whole fleet:\n"
+                      f'       cvenv.get_component("pytorch3d")'
+                      f'.build_wheel(arch_list="7.5+PTX", force=True)\n'
+                      f"   (7.5 = T4, the oldest Colab commonly hands out; this "
+                      f"GPU is sm_{cap.replace('.', '')}. Building for {cap} "
+                      f"instead would\n"
+                      f"   run natively here but fail again on anything older.)\n"
+                      f"   Or simply pick a runtime whose GPU matches the wheel.")
+                return False
+            print(f"❌ pytorch3d CUDA check failed on {name}: {type(e).__name__}: {e}")
+            return False
+        except Exception as e:
+            # Never let a probe problem masquerade as a broken install.
+            print(f"   ⚠️  could not run the CUDA kernel check "
+                  f"({type(e).__name__}: {e}); _C imported fine.")
+            return True
+
+        print(f"   ✅ CUDA kernels run on {name} (sm_{cap.replace('.', '')})")
         return True
 
 
