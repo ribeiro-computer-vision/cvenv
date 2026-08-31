@@ -18,6 +18,7 @@ from __future__ import annotations
 import contextlib
 import glob
 import os
+import re
 import sys
 import tempfile
 from pathlib import Path
@@ -126,6 +127,45 @@ def _default_wheel_dir(platform=None) -> str:
 _PLATFORM_ARCH_FLOOR = {
     "Colab": "7.5",        # T4 is the oldest Colab commonly assigns
 }
+
+
+def _parse_arch_list(spec):
+    """Split a ``TORCH_CUDA_ARCH_LIST`` into (native, ptx) capability tuples.
+
+    ``"7.5;8.0+PTX"`` -> ``([(7,5), (8,0)], [(8,0)])``. Every entry produces
+    native code for its own architecture; only the ``+PTX`` ones also produce
+    the portable image that the driver can JIT for newer hardware.
+    """
+    native, ptx = [], []
+    for tok in re.split(r"[;\s,]+", str(spec).strip()):
+        if not tok:
+            continue
+        base = tok.upper().replace("+PTX", "")
+        try:
+            cap = tuple(int(x) for x in base.split(".")[:2])
+        except ValueError:
+            continue                                  # e.g. "Turing" — skip
+        if len(cap) != 2:
+            continue
+        native.append(cap)
+        if tok.upper().endswith("+PTX"):
+            ptx.append(cap)
+    return native, ptx
+
+
+def _current_capability():
+    """This GPU's compute capability as ``(major, minor)``, or None."""
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return tuple(torch.cuda.get_device_capability(0))
+    except Exception:
+        pass
+    return None
+
+
+def _sm(cap):
+    return "sm_%d%d" % cap
 
 
 # -- wheel provenance ------------------------------------------------------
@@ -237,6 +277,34 @@ def wheel_compatibility(whl: str):
                            f"this runtime has {is_cuda}")
     elif not torch_here:
         unchecked.append("CUDA")
+
+    # GPU architecture. A wheel carries native code only for the architectures
+    # it was compiled for, and "+PTX" adds an image the driver JIT-compiles for
+    # anything NEWER. This was recorded in the sidecar but never compared, so a
+    # wheel built for another GPU was reported compatible, installed cleanly,
+    # and then died at the first kernel with cudaErrorNoKernelImageForDevice.
+    spec = meta.get("arch_list")
+    cap = _current_capability()
+    if spec and cap:
+        native, ptx = _parse_arch_list(spec)
+        if cap in native:
+            pass                                    # native code for this GPU
+        elif any(p <= cap for p in ptx):
+            pass                                    # PTX JIT-compiles for it
+        elif native or ptx:
+            if ptx:
+                covered = ", ".join(_sm(p) for p in ptx)
+                reasons.append(
+                    f"GPU: built for {spec}; its PTX covers {covered} and newer, "
+                    f"but this GPU is {_sm(cap)}")
+            else:
+                built = ", ".join(_sm(n) for n in native)
+                reasons.append(
+                    f"GPU: built for {spec} ({built}) with no PTX, and this GPU "
+                    f"is {_sm(cap)} — it carries no kernels for it")
+    elif not spec or not cap:
+        unchecked.append("GPU architecture")
+
     if reasons:
         return False, reasons
     if unchecked:

@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.12"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.13"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.12"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.13"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -164,7 +164,10 @@ cvenv.read_wheel_metadata(whl)   # python / torch / CUDA / arch / timestamp
 ```
 
 - `build_wheel` will **not** hand back a wheel the sidecar proves cannot load here —
-  it explains which of python/torch/CUDA differs and rebuilds instead.
+  it explains which of python/torch/CUDA/**GPU architecture** differs and rebuilds
+  instead. The architecture check is PTX-aware: a `7.5+PTX` wheel is accepted on any
+  GPU from `sm_75` up, while a bare `8.9` wheel is rejected on a T4 before it is ever
+  installed.
 - `install(wheel_url=...)` reports compatibility *before* installing, and fetches the
   sidecar alongside a remote wheel.
 - Wheels built before this existed have no sidecar and are reported as *unverified* —
