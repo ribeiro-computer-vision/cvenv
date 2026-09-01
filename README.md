@@ -54,7 +54,7 @@ cvenv.get_component("pytorch3d").verify()     # sanity check
 | `science`   | numpy (pinned `>=2.0,<2.1`, or `>=2.1` on Python 3.13+), scipy, matplotlib, pandas, scikit-image, scikit-learn, opencv, pillow, tqdm, imageio, colorama. Base for pure-numpy/scipy material (Kalman, Lie groups). |
 | `opengl`    | PyOpenGL + system GL/GLUT dev libs (for pyrender / rendering). |
 | `pytorch3d` | Facebook PyTorch3D — prebuilt wheel if possible, else source build. `verify()` rasterizes a triangle on the GPU, so an architecture mismatch shows up here rather than at your first render. Depends on `opengl`. |
-| `mast3r`    | NAVER MASt3R (clone repo, install deps, fetch checkpoint). |
+| `mast3r`    | NAVER MASt3R (clone repo, install deps, fetch checkpoint). A checkpoint staged via `checkpoint_dir=` is symlinked, not copied, so the model load is the only pass over the multi-GB file; pass `link_checkpoint=False` to force a real copy. Each install phase is timed and the totals printed. |
 | `sam2`      | Meta Segment Anything 2 (pip install + checkpoint download). |
 
 `cvenv list -v` prints each component's "why this is tricky" teaching note.
