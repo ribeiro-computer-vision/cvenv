@@ -205,9 +205,15 @@ def run_doctor() -> int:
                    f"         cvenv install pytorch3d --from-source "
                    f"--cuda-home {alt}"
                    if alt else
-                   f"     No CUDA {want_major}.x toolkit found under /usr/local. Install one,\n"
-                   f"     e.g.  conda install -y -c nvidia cuda-toolkit={torch_cuda}\n"
-                   f"     then re-run. Or pass --cuda-home if you have one elsewhere.")
+                   f"     No CUDA {want_major}.x toolkit found under /usr/local. Two ways out:\n"
+                   f"       (a) move torch to the toolkit you already have:\n"
+                   f"           pip install --force-reinstall torch \\\n"
+                   f"               --index-url https://download.pytorch.org/whl/cu{nvcc_ver.replace('.','')}\n"
+                   f"           (check that index has a wheel for your python first)\n"
+                   f"       (b) install a CUDA {want_major}.x toolkit and pass --cuda-home.\n"
+                   f"     Avoid `conda install cuda-toolkit` inside a managed env: it pulls a\n"
+                   f"     cross-compiler whose post-link script expects the BASE conda prefix\n"
+                   f"     and fails (seen on Lightning Studio).")
             advice.append(
                 f"torch refuses to compile against a different CUDA major version:\n"
                 f"     nvcc is {nvcc_ver}, torch was built with {torch_cuda}. This stops\n"
