@@ -94,8 +94,13 @@ def _report(rows: list[tuple[str, str, str]], title: str) -> None:
         print(f"  {mark} {label:<{width}}  {detail}")
 
 
-def run_doctor() -> int:
-    """Print a preflight report. Return 0 if a CUDA build can proceed, else 1."""
+def run_doctor(cuda_home: str | None = None) -> int:
+    """Print a preflight report. Return 0 if a CUDA build can proceed, else 1.
+
+    ``cuda_home`` mirrors the ``--cuda-home`` flag on install/build-wheel, so the
+    machine can be checked against the same toolkit the build will use without
+    exporting CUDA_HOME first.
+    """
     from .platform import PlatformManager
 
     pm = PlatformManager()
@@ -187,12 +192,30 @@ def run_doctor() -> int:
     # Only needed to BUILD a wheel. Installing a prebuilt wheel does not need
     # nvcc at all, so a missing toolkit is a warning rather than a failure.
     rows = []
-    nvcc_out = _run(["nvcc", "--version"])
+    # Resolve nvcc exactly the way torch does: cpp_extension reads
+    # $CUDA_HOME/bin/nvcc, NOT whatever `nvcc` is first on PATH. Reading PATH
+    # here reported the wrong compiler on an image that ships nvcc 13 as
+    # /usr/local/cuda while CUDA_HOME points at a 12.8 toolkit -- the version
+    # torch would use matched, but the report claimed a mismatch and refused.
+    cuda_home = (cuda_home or os.environ.get("CUDA_HOME")
+                 or os.environ.get("CUDA_PATH"))
+    toolkit_root = cuda_home or ("/usr/local/cuda"
+                                 if os.path.isdir("/usr/local/cuda") else None)
+    nvcc_bin, nvcc_from = None, ""
+    if toolkit_root:
+        candidate = os.path.join(toolkit_root, "bin", "nvcc")
+        if os.path.isfile(candidate):
+            nvcc_bin, nvcc_from = candidate, " (from CUDA_HOME)" if cuda_home else ""
+    if nvcc_bin is None:
+        nvcc_bin = shutil.which("nvcc")
+        nvcc_from = " (from PATH)" if nvcc_bin and cuda_home else ""
+
+    nvcc_out = _run([nvcc_bin, "--version"]) if nvcc_bin else None
     nvcc_ver = None
     if nvcc_out:
         m = re.search(r"release (\d+\.\d+)", nvcc_out)
         nvcc_ver = m.group(1) if m else "?"
-        rows.append((OK, "nvcc", nvcc_ver))
+        rows.append((OK, "nvcc", f"{nvcc_ver}{nvcc_from}"))
     else:
         rows.append((WARN, "nvcc", "not found (only needed to BUILD a wheel)"))
         advice.append(
@@ -202,7 +225,6 @@ def run_doctor() -> int:
                "     driver live on opposite sides of the boundary."
                if is_wsl else "     version shown above."))
 
-    cuda_home = os.environ.get("CUDA_HOME") or os.environ.get("CUDA_PATH")
     if cuda_home:
         rows.append((OK if os.path.isdir(cuda_home) else BAD, "CUDA_HOME", cuda_home))
     elif os.path.isdir("/usr/local/cuda"):
@@ -212,7 +234,6 @@ def run_doctor() -> int:
 
     # A toolkit that exists but is missing library headers fails the build a
     # minute in, so check it here rather than letting nvcc discover it.
-    toolkit_root = cuda_home or ("/usr/local/cuda" if os.path.isdir("/usr/local/cuda") else None)
     if nvcc_out and toolkit_root:
         missing = _missing_headers(os.path.join(toolkit_root, "include"))
         if missing:

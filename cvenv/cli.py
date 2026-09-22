@@ -35,7 +35,7 @@ def _cmd_platform(args) -> int:
 
 def _cmd_doctor(args) -> int:
     from .doctor import run_doctor
-    return run_doctor()
+    return run_doctor(cuda_home=getattr(args, "cuda_home", None))
 
 
 def _install_opts(args) -> dict:
@@ -129,6 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     pd = sub.add_parser("doctor",
                         help="check this machine can build/install with CUDA")
+    pd.add_argument("--cuda-home",
+                    help="check against this CUDA toolkit (as install/build-wheel use it)")
     pd.set_defaults(func=_cmd_doctor)
 
     pi = sub.add_parser("install", help="install one or more components")
