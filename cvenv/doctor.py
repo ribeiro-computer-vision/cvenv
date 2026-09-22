@@ -43,6 +43,31 @@ def _cuda_major(version: str | None) -> str | None:
     return version.split(".")[0] if version else None
 
 
+# Headers a torch CUDA extension needs from the toolkit, and the apt package
+# (suffixed with the toolkit version) that supplies each. torch's own ATen
+# headers pull in cuSPARSE, cuBLAS and cuSOLVER -- ATen/cuda/CUDAContextLight.h
+# includes cusparse.h directly -- so a toolkit carrying only nvcc and cudart
+# compiles nothing. That failure arrives ~1 minute into a build as
+# "fatal error: cusparse.h: No such file or directory", which reads like a
+# PyTorch3D problem and is not one.
+_REQUIRED_HEADERS = [
+    ("cuda_runtime.h", "cuda-cudart-dev"),
+    ("cusparse.h",     "libcusparse-dev"),
+    ("cublas_v2.h",    "libcublas-dev"),
+    ("cusolverDn.h",   "libcusolver-dev"),
+    ("thrust/version.h", "cuda-cccl"),
+    ("cub/version.cuh",  "cuda-cccl"),
+]
+
+
+def _missing_headers(include_dir: str) -> list[tuple[str, str]]:
+    """Which required headers are absent from a toolkit's include dir."""
+    if not include_dir or not os.path.isdir(include_dir):
+        return []
+    return [(h, pkg) for h, pkg in _REQUIRED_HEADERS
+            if not os.path.exists(os.path.join(include_dir, h))]
+
+
 def _matching_toolkit(torch_cuda: str | None) -> str | None:
     """A CUDA toolkit on this machine whose major version matches torch's.
 
@@ -184,6 +209,28 @@ def run_doctor() -> int:
         rows.append((OK, "CUDA_HOME", "unset — will default to /usr/local/cuda"))
     else:
         rows.append((WARN, "CUDA_HOME", "unset, and /usr/local/cuda does not exist"))
+
+    # A toolkit that exists but is missing library headers fails the build a
+    # minute in, so check it here rather than letting nvcc discover it.
+    toolkit_root = cuda_home or ("/usr/local/cuda" if os.path.isdir("/usr/local/cuda") else None)
+    if nvcc_out and toolkit_root:
+        missing = _missing_headers(os.path.join(toolkit_root, "include"))
+        if missing:
+            names = ", ".join(h for h, _ in missing)
+            rows.append((BAD, "toolkit headers", f"missing: {names}"))
+            problems.append("the CUDA toolkit is missing headers a torch "
+                            "extension needs")
+            suffix = (nvcc_ver or "").replace(".", "-")
+            pkgs = " ".join(sorted({f"{pkg}-{suffix}" for _, pkg in missing}))
+            advice.append(
+                "The toolkit has nvcc but not the library headers torch's ATen\n"
+                "     includes, so every CUDA source fails to compile. Install them:\n"
+                f"         sudo apt-get install -y {pkgs}\n"
+                f"     Or install the lot in one go: sudo apt-get install -y "
+                f"cuda-toolkit-{suffix}")
+        else:
+            rows.append((OK, "toolkit headers",
+                         "cudart, cuBLAS, cuSPARSE, cuSOLVER, thrust/cub all present"))
 
     if nvcc_ver and torch_cuda:
         if _cuda_major(nvcc_ver) == _cuda_major(torch_cuda):
