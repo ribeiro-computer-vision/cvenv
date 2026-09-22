@@ -469,30 +469,70 @@ class PyTorch3D(Component):
 
         existing = glob.glob(os.path.join(out_dir, "pytorch3d-*.whl"))
         if existing and not force:
-            whl = max(existing, key=os.path.getmtime)
-            verdict, reasons = wheel_compatibility(whl)
-            if verdict is False:
-                # Recorded metadata proves this wheel cannot load here. Reusing
-                # it would install cleanly and then fail at `import
-                # pytorch3d._C`, so rebuild rather than hand back a dud.
-                print(f"⚠️  not reusing {os.path.basename(whl)} — built for a "
-                      "different runtime:")
+            # Consider EVERY wheel in the directory, newest first — not just the
+            # newest one. Someone who moves between Colab and their own machine
+            # (or upgrades torch) accumulates several wheels here, and the most
+            # recent is often the one built somewhere else. Rebuilding then costs
+            # half an hour while a wheel that does match sits in the same folder.
+            ranked = sorted(existing, key=os.path.getmtime, reverse=True)
+            checked = [(w, *wheel_compatibility(w)) for w in ranked]
+
+            for whl, verdict, reasons in checked:
+                if verdict is True:
+                    meta = read_wheel_metadata(whl) or {}
+                    print(f"✅ reusing existing wheel: {whl}\n"
+                          f"   (built {meta.get('built', '?')} against torch "
+                          f"{meta.get('torch')} / CUDA {meta.get('cuda')} — matches "
+                          "this runtime.)")
+                    return whl
+
+            for whl, verdict, reasons in checked:
+                if verdict is None:
+                    print(f"✅ reusing existing wheel: {whl}\n"
+                          f"   ({reasons[0]}; it is only valid where python, torch "
+                          "and CUDA all match the machine it was built on — pass "
+                          "force=True / --force to rebuild.)")
+                    return whl
+
+            # Every wheel present has metadata proving it cannot load here.
+            # Installing one would succeed and then fail at `import
+            # pytorch3d._C`, so rebuild rather than hand back a dud.
+            noun = "wheel" if len(checked) == 1 else f"all {len(checked)} wheels"
+            print(f"⚠️  not reusing {noun} in {out_dir} — built for a different "
+                  "runtime:")
+            for whl, _, reasons in checked:
+                print(f"   {os.path.basename(whl)}")
                 for r in reasons:
                     print(f"      • {r}")
-                print("   Rebuilding for this runtime.")
-            elif verdict is None:
-                print(f"✅ reusing existing wheel: {whl}\n"
-                      f"   ({reasons[0]}; it is only valid where python, torch and "
-                      "CUDA all match the machine it was built on — pass "
-                      "force=True / --force to rebuild.)")
-                return whl
-            else:
-                meta = read_wheel_metadata(whl) or {}
-                print(f"✅ reusing existing wheel: {whl}\n"
-                      f"   (built {meta.get('built', '?')} against torch "
-                      f"{meta.get('torch')} / CUDA {meta.get('cuda')} — matches "
-                      "this runtime.)")
-                return whl
+            print("   Rebuilding for this runtime.")
+
+        # Fail fast on a torch that cannot produce a CUDA build. FORCE_CUDA=1
+        # below makes the compile *attempt* CUDA regardless, so a CPU-only torch
+        # does not fail here — it fails several minutes in, inside nvcc, with an
+        # error that says nothing about the actual cause. The common way to get
+        # here is a plain `pip install torch` that resolved to a +cpu build, or
+        # a WSL2 distro whose Windows NVIDIA driver is missing or too old.
+        try:
+            import torch
+            if torch.version.cuda is None:
+                raise RuntimeError(
+                    f"this Python has a CPU-only torch ({torch.__version__}), so a "
+                    "CUDA build of PyTorch3D cannot be produced from it.\n"
+                    "Install a CUDA build of torch first, e.g.\n"
+                    "    pip install --force-reinstall torch "
+                    "--index-url https://download.pytorch.org/whl/cu124\n"
+                    "then run `cvenv doctor` to confirm before rebuilding.")
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"torch {torch.__version__} is a CUDA build (CUDA "
+                    f"{torch.version.cuda}) but no GPU is visible to it, so the "
+                    "build cannot be verified and the wheel would likely be "
+                    "unusable here.\nRun `cvenv doctor` — it reports whether the "
+                    "driver, the GPU and torch agree.")
+        except ImportError:
+            raise RuntimeError(
+                "torch is not installed in this Python. Install a CUDA build of "
+                "torch first, then run `cvenv doctor`.")
 
         print(f"Building a PyTorch3D wheel from source (ref={ref}); "
               "this can take several minutes…")

@@ -70,7 +70,7 @@ so you never pay the multi-minute compile twice:
 | Colab        | `/content/drive/MyDrive/cvenv_wheels` (if Drive mounted; else ephemeral `/content/...` with a warning) |
 | RunPod       | `/workspace/cvenv_wheels`   |
 | Lightning AI | `…/this_studio/cvenv_wheels`|
-| local        | `~/.cvenv/wheels`           |
+| WSL2 / local | `~/.cvenv/wheels`           |
 
 ```python
 # first time (builds + saves the wheel, then installs it)
@@ -99,6 +99,51 @@ A wheel is valid **only** where python (cp), torch, and CUDA match the machine i
 built on — so build it on (or identically to) the runtime you'll use it on.
 `build_wheel` is **idempotent**: it reuses an existing wheel in the output dir; pass
 `force=True` / `--force` to rebuild it anyway.
+
+When several wheels sit in the same directory, `build_wheel` checks **all** of them
+against the current runtime and reuses the one that matches — not simply the newest.
+That is what makes it safe to keep a Colab-built and a locally-built wheel side by
+side (see below).
+
+## Use your own machine instead of Colab
+
+Colab is the default, but nothing in `cvenv` requires it. A student with an NVIDIA
+GPU — a Linux box, or Windows via WSL2 — can build their own wheel once and then work
+locally whenever Colab credits run short.
+
+**Check the machine first.** A source build takes tens of minutes and fails *late*,
+deep inside `nvcc`, for causes that are visible in a second up front (a CPU-only
+torch, a GPU the driver cannot see, a toolkit that does not match torch). `cvenv
+doctor` checks those and tells you what to fix. It installs nothing:
+
+```bash
+cvenv doctor
+```
+
+**Then build once, and install from then on:**
+
+```bash
+cvenv build-wheel pytorch3d      # minutes, once — saves to ~/.cvenv/wheels
+cvenv install pytorch3d          # seconds, every time after
+```
+
+**Switching between Colab and your own machine needs no extra work.** Each wheel is
+saved with a provenance sidecar recording the python, torch and CUDA it was built
+against, and `cvenv` picks the wheel matching wherever it is currently running. Keep
+the Colab-built wheel in Drive and the local one in `~/.cvenv/wheels` and each
+environment finds its own; put both in one directory and `cvenv` still selects the
+right one. If none of them matches, it says which wheels it rejected and why, then
+rebuilds rather than installing one that would fail at `import pytorch3d._C`.
+
+### WSL2
+
+WSL2 is reported as its own platform, because its most common failure has a
+Windows-side cause. The NVIDIA **driver** belongs on Windows — the ordinary
+GeForce/Studio driver includes WSL support — while the CUDA **toolkit** is installed
+*inside* the distro. Installing a Linux driver in the distro is the usual way to
+break a working setup. If `nvidia-smi` shows nothing, confirm you are on WSL2 and not
+WSL1 (`wsl -l -v` in PowerShell); WSL1 cannot see the GPU at all. `cvenv doctor`
+reports all of this.
 
 ### GPU architecture, and why the default ends in `+PTX`
 
@@ -186,6 +231,7 @@ degrades to *unverified*.
 ```
 cvenv list [-v]                                   # components (+ teaching notes)
 cvenv platform                                    # detected platform + paths
+cvenv doctor                                      # can this machine build/install with CUDA?
 cvenv install <components...> [options]
     --wheel-url URL        prebuilt PyTorch3D wheel
     --checkpoint-dir DIR   reuse a locally staged checkpoint (skip download)

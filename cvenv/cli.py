@@ -2,6 +2,7 @@
 
     cvenv list
     cvenv platform
+    cvenv doctor
     cvenv install pytorch3d mast3r sam2 [--wheel-url URL] [--checkpoint-dir DIR] [--from-source] [--force]
     cvenv verify pytorch3d mast3r sam2
 """
@@ -30,6 +31,11 @@ def _cmd_platform(args) -> int:
     print(f"local_path : {pm.local_path}")
     print(f"python     : {sys.version.split()[0]} ({sys.executable})")
     return 0
+
+
+def _cmd_doctor(args) -> int:
+    from .doctor import run_doctor
+    return run_doctor()
 
 
 def _install_opts(args) -> dict:
@@ -120,6 +126,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     pp = sub.add_parser("platform", help="show detected platform")
     pp.set_defaults(func=_cmd_platform)
+
+    pd = sub.add_parser("doctor",
+                        help="check this machine can build/install with CUDA")
+    pd.set_defaults(func=_cmd_doctor)
 
     pi = sub.add_parser("install", help="install one or more components")
     pi.add_argument("components", nargs="+")
