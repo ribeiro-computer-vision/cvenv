@@ -107,25 +107,31 @@ side (see below).
 
 ## Use your own machine instead of Colab
 
-Colab is the default, but nothing in `cvenv` requires it. A student with an NVIDIA
-GPU — a Linux box, or Windows via WSL2 — can build their own wheel once and then work
-locally whenever Colab credits run short.
+Colab is the default, but nothing in `cvenv` requires it. Anyone with an NVIDIA GPU —
+a Linux box, or Windows via WSL2 — can set up locally and work there whenever Colab
+credits run short.
 
-**Check the machine first.** A source build takes tens of minutes and fails *late*,
-deep inside `nvcc`, for causes that are visible in a second up front (a CPU-only
-torch, a GPU the driver cannot see, a toolkit that does not match torch). `cvenv
-doctor` checks those and tells you what to fix. It installs nothing:
+**The commands are the same ones as everywhere else.** There is no separate
+local recipe — `cvenv install` already picks the fast path on its own:
 
 ```bash
-cvenv doctor
+cvenv doctor                             # optional, but do it on a new machine
+cvenv install pytorch3d mast3r sam2
+cvenv verify  pytorch3d mast3r sam2
 ```
 
-**Then build once, and install from then on:**
+`cvenv install pytorch3d` tries the official PyTorch3D wheel index first (Linux),
+and only builds from source if no prebuilt wheel fits your python/torch/CUDA. Either
+way you end up installed, and a source build **saves its wheel to `~/.cvenv/wheels`
+automatically** — so the slow path happens at most once and later sessions reuse it.
+You do **not** need to run `build-wheel` first; that command is for producing a wheel
+*without* installing it (see above), e.g. to build one centrally and hand it out.
 
-```bash
-cvenv build-wheel pytorch3d      # minutes, once — saves to ~/.cvenv/wheels
-cvenv install pytorch3d          # seconds, every time after
-```
+**Why run `cvenv doctor` on a new machine.** A source build takes tens of minutes and
+fails *late*, deep inside `nvcc`, for causes that are visible in a second up front (a
+CPU-only torch, a GPU the driver cannot see, a toolkit that does not match torch).
+`doctor` checks those and tells you what to fix. It installs nothing and changes
+nothing, so it is always safe to run first.
 
 **Switching between Colab and your own machine needs no extra work.** Each wheel is
 saved with a provenance sidecar recording the python, torch and CUDA it was built
