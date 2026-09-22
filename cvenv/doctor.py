@@ -43,6 +43,25 @@ def _cuda_major(version: str | None) -> str | None:
     return version.split(".")[0] if version else None
 
 
+def _matching_toolkit(torch_cuda: str | None) -> str | None:
+    """A CUDA toolkit on this machine whose major version matches torch's.
+
+    Images that ship several toolkits under /usr/local (Lightning Studio and
+    most cloud GPU images do) usually already have the right one — it is just
+    not the one /usr/local/cuda points at. Finding it turns "install a matching
+    toolkit" into a --cuda-home flag the reader can paste.
+    """
+    import glob
+    if not torch_cuda:
+        return None
+    want = _cuda_major(torch_cuda)
+    for path in sorted(glob.glob("/usr/local/cuda-*"), reverse=True):
+        ver = path.rsplit("cuda-", 1)[-1]
+        if _cuda_major(ver) == want and os.path.isfile(os.path.join(path, "bin", "nvcc")):
+            return path
+    return None
+
+
 def _report(rows: list[tuple[str, str, str]], title: str) -> None:
     print(f"\n{title}")
     width = max(len(label) for _, label, _ in rows) if rows else 0
@@ -171,14 +190,29 @@ def run_doctor() -> int:
             note = "match" if nvcc_ver == torch_cuda else "same major version — fine"
             rows.append((OK, "nvcc vs torch CUDA", f"{nvcc_ver} vs {torch_cuda} — {note}"))
         else:
+            # This blocks a source build — and `cvenv install` falls back to a
+            # source build whenever no prebuilt wheel matches the runtime, which
+            # for PyTorch3D is the common case. So it blocks the install too, and
+            # reporting it as a mere warning would be misleading: torch's own
+            # cpp_extension refuses the build outright with CUDA_MISMATCH.
+            want_major = _cuda_major(torch_cuda)
             rows.append((BAD, "nvcc vs torch CUDA",
                          f"{nvcc_ver} vs {torch_cuda} — major versions differ"))
             problems.append(f"CUDA toolkit {nvcc_ver} does not match torch's "
                             f"CUDA {torch_cuda}")
+            alt = _matching_toolkit(torch_cuda)
+            fix = (f"     A matching toolkit is already on this machine — use it:\n"
+                   f"         cvenv install pytorch3d --from-source "
+                   f"--cuda-home {alt}"
+                   if alt else
+                   f"     No CUDA {want_major}.x toolkit found under /usr/local. Install one,\n"
+                   f"     e.g.  conda install -y -c nvidia cuda-toolkit={torch_cuda}\n"
+                   f"     then re-run. Or pass --cuda-home if you have one elsewhere.")
             advice.append(
-                f"A wheel built with nvcc {nvcc_ver} against a torch built for CUDA\n"
-                f"     {torch_cuda} will fail to link or fail to import. Install the\n"
-                f"     matching toolkit, or point --cuda-home at one you already have.")
+                f"torch refuses to compile against a different CUDA major version:\n"
+                f"     nvcc is {nvcc_ver}, torch was built with {torch_cuda}. This stops\n"
+                f"     `cvenv install` too, because it falls back to a source build\n"
+                f"     when no prebuilt wheel matches this runtime.\n" + fix)
     _report(rows, "CUDA toolkit")
 
     # ------------------------------------------------------------ build tools
@@ -215,7 +249,7 @@ def run_doctor() -> int:
     # ---------------------------------------------------------------- verdict
     print()
     if problems:
-        print(f"{BAD} Not ready for a CUDA build — " + "; ".join(problems) + ".")
+        print(f"{BAD} Not ready — " + "; ".join(problems) + ".")
         print("\nWhat to do:")
         for i, item in enumerate(advice, 1):
             print(f"  {i}. {item}")

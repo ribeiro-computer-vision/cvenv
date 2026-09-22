@@ -12,7 +12,7 @@ Install components individually or in bulk, from a notebook or the CLI:
 """
 
 from .platform import PlatformManager
-from .doctor import run_doctor as doctor
+from .doctor import run_doctor
 from .components.pytorch3d import (
     read_wheel_metadata,
     wheel_compatibility,
@@ -27,10 +27,10 @@ from .base import (
     setup,
 )
 
-__version__ = "0.1.16"
+__version__ = "0.1.17"
 
 __all__ = [
-    "doctor",
+    "run_doctor",
     "PlatformManager",
     "Component",
     "REGISTRY",

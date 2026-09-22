@@ -548,6 +548,15 @@ class PyTorch3D(Component):
         os.environ.setdefault("FORCE_CUDA", "1")
         if cuda_home:
             os.environ["CUDA_HOME"] = cuda_home
+            # Also put this toolkit's bin FIRST on PATH. Setting CUDA_HOME alone
+            # is not enough on an image carrying several toolkits (Lightning
+            # Studio ships nvcc 13 beside a 12.x torch): anything in the build
+            # that resolves plain `nvcc` from PATH would still find the wrong
+            # one, and the mismatch only surfaces once torch's cpp_extension
+            # refuses to compile. Make the flag authoritative.
+            bin_dir = os.path.join(cuda_home, "bin")
+            if os.path.isdir(bin_dir):
+                os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
         elif os.path.isdir("/usr/local/cuda"):
             os.environ.setdefault("CUDA_HOME", "/usr/local/cuda")
 
