@@ -69,22 +69,9 @@ def _missing_headers(include_dir: str) -> list[tuple[str, str]]:
 
 
 def _matching_toolkit(torch_cuda: str | None) -> str | None:
-    """A CUDA toolkit on this machine whose major version matches torch's.
-
-    Images that ship several toolkits under /usr/local (Lightning Studio and
-    most cloud GPU images do) usually already have the right one — it is just
-    not the one /usr/local/cuda points at. Finding it turns "install a matching
-    toolkit" into a --cuda-home flag the reader can paste.
-    """
-    import glob
-    if not torch_cuda:
-        return None
-    want = _cuda_major(torch_cuda)
-    for path in sorted(glob.glob("/usr/local/cuda-*"), reverse=True):
-        ver = path.rsplit("cuda-", 1)[-1]
-        if _cuda_major(ver) == want and os.path.isfile(os.path.join(path, "bin", "nvcc")):
-            return path
-    return None
+    """Delegate to the same finder the build uses, so advice and behaviour agree."""
+    from .components.pytorch3d import find_matching_toolkit
+    return find_matching_toolkit(torch_cuda)
 
 
 def _report(rows: list[tuple[str, str, str]], title: str) -> None:

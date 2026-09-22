@@ -176,6 +176,44 @@ def _sm(cap):
 # then fails at ``import pytorch3d._C`` with an undefined symbol. So each built
 # wheel gets a sidecar recording what it was built against.
 
+def _cuda_major(v) -> str | None:
+    return str(v).split(".")[0] if v else None
+
+
+def find_matching_toolkit(torch_cuda: str | None = None) -> str | None:
+    """A CUDA toolkit under /usr/local whose major version matches torch's.
+
+    torch refuses to compile an extension when nvcc's major version differs from
+    the CUDA it was built with, so the toolkit that /usr/local/cuda happens to
+    point at is not necessarily a usable one. Images pairing a new nvcc with an
+    older torch (Lightning Studio ships nvcc 13 beside a cu128 torch) need the
+    *other* toolkit, and requiring everyone to discover --cuda-home for
+    themselves is not a reasonable ask. Prefer a match when one exists.
+    """
+    import glob
+    if torch_cuda is None:
+        try:
+            import torch
+            torch_cuda = torch.version.cuda
+        except Exception:
+            return None
+    want = _cuda_major(torch_cuda)
+    if not want:
+        return None
+    candidates = []
+    for path in glob.glob("/usr/local/cuda-*"):
+        ver = path.rsplit("cuda-", 1)[-1]
+        if _cuda_major(ver) == want and os.path.isfile(os.path.join(path, "bin", "nvcc")):
+            candidates.append((ver, path))
+    # Highest minor version wins, so cuda-12.8 beats cuda-12.1 for a cu128 torch.
+    def key(item):
+        try:
+            return tuple(int(x) for x in item[0].split("."))
+        except ValueError:
+            return (0,)
+    return max(candidates, key=key)[1] if candidates else None
+
+
 SIDECAR_SUFFIX = ".build.json"
 
 
@@ -546,6 +584,15 @@ class PyTorch3D(Component):
         # toolkit matching the runtime's torch build (a mismatch also breaks
         # pulsar's link).
         os.environ.setdefault("FORCE_CUDA", "1")
+        if not cuda_home and not os.environ.get("CUDA_HOME"):
+            # Nothing was named and nothing is exported: do not blindly take
+            # /usr/local/cuda, which may be a major version torch refuses to
+            # compile against. Look for one that matches.
+            auto = find_matching_toolkit()
+            if auto:
+                cuda_home = auto
+                print(f"   using CUDA toolkit {auto} (matches this torch; "
+                      "/usr/local/cuda may be a different version)")
         if cuda_home:
             os.environ["CUDA_HOME"] = cuda_home
             # Also put this toolkit's bin FIRST on PATH. Setting CUDA_HOME alone
@@ -721,7 +768,13 @@ class PyTorch3D(Component):
                             check=False)
         if self.is_installed():
             return
-        self._source_build(wheel_out_dir=wheel_out_dir, platform=platform)
+        # Forward the build options here too. They used to be passed only on the
+        # explicit from_source path, so `--cuda-home` was silently dropped when
+        # the official index simply had no matching wheel — which is the usual
+        # way this code is reached.
+        self._source_build(wheel_out_dir=wheel_out_dir, platform=platform,
+                           **{k: opts[k] for k in ("cuda_home", "arch_list")
+                              if k in opts})
 
     def verify(self) -> bool:
         import torch  # noqa: F401  (load libc10 first)
