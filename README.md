@@ -14,7 +14,7 @@ machine and installs the heavy things into whatever environment it runs in
 ## Install
 
 ```bash
-pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.20"
+pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.21"
 ```
 
 (Pin a tag so a tutorial keeps working across semesters; bump it when you
@@ -32,7 +32,7 @@ cvenv verify  pytorch3d mast3r sam2
 In a Colab / Jupyter cell:
 
 ```python
-!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.20"
+!pip install "git+https://github.com/ribeiro-computer-vision/cvenv@v0.1.21"
 !cvenv install pytorch3d mast3r sam2
 # If numpy was changed, Runtime -> Restart, then continue.
 ```
@@ -74,16 +74,21 @@ so you never pay the multi-minute compile twice:
 
 ```python
 # first time (builds + saves the wheel, then installs it)
-cvenv.get_component("pytorch3d").install(from_source=True)
-#   → 💾 saved reusable wheel: /content/drive/MyDrive/cvenv_wheels/pytorch3d-….whl
+cvenv.get_component("pytorch3d").install()
+#   → 💾 saved reusable wheel: …/cvenv_wheels/pytorch3d-….whl
 
-# every session after (seconds, not minutes)
-cvenv.get_component("pytorch3d").install(
-    wheel_url="/content/drive/MyDrive/cvenv_wheels/pytorch3d-….whl")
+# every session after (seconds, not minutes) — the SAME call: it finds the saved
+# wheel and reuses it when the recorded python/torch/CUDA match this runtime
+cvenv.get_component("pytorch3d").install()
 ```
 
-Override the location with `wheel_out_dir=...` (Python) or `--wheel-out-dir DIR`
-(CLI). On Colab, mount Drive **before** building so the wheel persists.
+`cvenv.wheel_dir()` reports the directory for the current platform, so notebooks
+and scripts can ask instead of hardcoding a path. Override the location with
+`wheel_out_dir=...` (Python) or `--wheel-out-dir DIR` (CLI). On Colab, mount
+Drive **before** building so the wheel persists.
+
+`install(from_source=True)` / `--from-source` is a *recovery* request and always
+rebuilds. Plain `install()` reuses a matching cached wheel.
 
 **Build the wheel without installing** (e.g. produce an artifact on a build box to
 download or hand to students) — `build_wheel` / `cvenv build-wheel`:

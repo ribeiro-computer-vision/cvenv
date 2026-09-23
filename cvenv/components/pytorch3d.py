@@ -684,15 +684,23 @@ class PyTorch3D(Component):
               f"   provenance recorded in {os.path.basename(wheel_sidecar(whl))}")
         return whl
 
-    def _source_build(self, wheel_out_dir=None, platform=None, **kw) -> None:
+    def _source_build(self, wheel_out_dir=None, platform=None, force=True,
+                      **kw) -> None:
         """Build the wheel (saved to a persistent dir), then install it. Reusing
-        the saved wheel next session takes seconds, not a fresh compile."""
+        the saved wheel next session takes seconds, not a fresh compile.
+
+        ``force`` distinguishes the two ways this is reached. An explicit
+        ``from_source=True`` is a recovery request — the caller wants a genuine
+        rebuild — so it forces one. Arriving here merely because no prebuilt
+        wheel fitted is the ordinary path, and there a cached wheel that matches
+        this runtime should be reused: rebuilding it costs half an hour and
+        produces the same file. Wheels are vetted against recorded provenance
+        before reuse, so this no longer risks installing a mismatched one.
+        """
         from .._pip import pip_install
-        # from_source is the recovery path (wheels didn't work), so force a
-        # genuine rebuild rather than reusing a possibly-mismatched saved wheel.
         try:
             whl = self.build_wheel(out_dir=wheel_out_dir, platform=platform,
-                                   force=True, **kw)
+                                   force=force, **kw)
         except RuntimeError as e:
             print(f"⚠️  {e}; installing directly from source as a fallback.")
             pip_install("git+https://github.com/facebookresearch/pytorch3d.git@stable",
@@ -773,6 +781,7 @@ class PyTorch3D(Component):
         # the official index simply had no matching wheel — which is the usual
         # way this code is reached.
         self._source_build(wheel_out_dir=wheel_out_dir, platform=platform,
+                           force=False,
                            **{k: opts[k] for k in ("cuda_home", "arch_list")
                               if k in opts})
 
