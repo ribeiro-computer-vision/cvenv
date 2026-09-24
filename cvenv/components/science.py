@@ -11,6 +11,14 @@ support in 2.1.0, so ``<2.1`` has no cp313 wheel and pip silently falls back to
 compiling NumPy from source — minutes of build, or a failure. The pin is
 therefore chosen per interpreter.
 
+The mismatch runs both ways. Lightning Studio shipped pandas 2.1.4 and
+scikit-learn 1.3.2, both requiring numpy<2, beside the numpy>=2.0 this component
+pins — and installing them by bare name changed nothing, because pip counts an
+already-installed package as satisfying a bare requirement. Hence the numpy-2
+lower bounds in STACK, and hence checking the stack by importing it rather than
+merely locating it: a package built against the wrong numpy is present and
+importable-looking right up until it raises.
+
 This component is also the base for pure-numpy/scipy course material (e.g. Kalman
 filtering, Lie groups) — those need nothing beyond this stack.
 """
@@ -30,34 +38,57 @@ NUMPY_PIN = "numpy>=2.0,<2.1" if sys.version_info < (3, 13) else "numpy>=2.1"
 # differ often enough — scikit-image/skimage, scikit-learn/sklearn, pillow/PIL,
 # opencv-python/cv2 — that checking the wrong one is how a package goes missing
 # without anyone noticing.
+#
+# The lower bounds are the first releases BUILT against numpy 2, and they are the
+# point of this list rather than decoration. `pip install pandas` does not upgrade
+# an already-installed pandas — pip treats the requirement as satisfied — so
+# pinning numpy>=2.0 on an image that ships a numpy-1-era pandas leaves the two
+# mismatched and produces exactly the error this component exists to prevent:
+#
+#     ValueError: numpy.dtype size changed, may indicate binary incompatibility.
+#                 Expected 96 from C header, got 88 from PyObject
+#
+# Lightning Studio shipped pandas 2.1.4 and scikit-learn 1.3.2, both of which
+# require numpy<2; installing them by bare name changed nothing. A lower bound
+# makes the installed version *unsatisfying*, so pip actually upgrades it. Only
+# packages that embed numpy's C ABI need one.
 STACK = [
-    (NUMPY_PIN,       "numpy"),
-    ("scipy",         "scipy"),
-    ("matplotlib",    "matplotlib"),
-    ("pandas",        "pandas"),
-    ("scikit-image",  "skimage"),
-    ("scikit-learn",  "sklearn"),
-    ("opencv-python", "cv2"),
-    ("pillow",        "PIL"),
-    ("tqdm",          "tqdm"),
-    ("imageio",       "imageio"),
-    ("colorama",      "colorama"),
+    (NUMPY_PIN,              "numpy"),
+    ("scipy>=1.13",          "scipy"),
+    ("matplotlib>=3.9",      "matplotlib"),
+    ("pandas>=2.2.2",        "pandas"),
+    ("scikit-image>=0.24",   "skimage"),
+    ("scikit-learn>=1.5",    "sklearn"),
+    ("opencv-python>=4.10",  "cv2"),
+    ("pillow",               "PIL"),
+    ("tqdm",                 "tqdm"),
+    ("imageio",              "imageio"),
+    ("colorama",             "colorama"),
 ]
 REQUIREMENTS = [req for req, _ in STACK]
 MODULES = [mod for _, mod in STACK]
 
 
-def _missing_modules() -> list[str]:
-    """Which of the stack's modules are not importable, without importing them."""
-    import importlib.util
-    missing = []
+def _broken_modules() -> "dict[str, Exception]":
+    """Stack modules that do not import, mapped to why.
+
+    This genuinely imports rather than calling find_spec. A package whose compiled
+    extension disagrees with the installed numpy is *present* — find_spec finds it
+    happily — and only raises on import:
+
+        ValueError: numpy.dtype size changed ...
+
+    Locating it therefore reported the stack as fine, install() skipped, and the
+    mismatch surfaced later inside whatever first imported pandas.
+    """
+    import importlib
+    broken = {}
     for mod in MODULES:
         try:
-            if importlib.util.find_spec(mod) is None:
-                missing.append(mod)
-        except (ImportError, ValueError):
-            missing.append(mod)
-    return missing
+            importlib.import_module(mod)
+        except Exception as exc:
+            broken[mod] = exc
+    return broken
 
 
 class Science(Component):
@@ -66,8 +97,11 @@ class Science(Component):
     teaching_note = (
         "numpy pinned to >=2.0,<2.1: modern Colab/Studio ship numpy-2, and their "
         "compiled cv2/scipy are built against it. Installing numpy<2 triggers "
-        "'numpy.dtype size changed' ABI errors. If numpy changes in a live kernel, "
-        "restart the runtime once — never force-reinstall numpy repeatedly."
+        "'numpy.dtype size changed' ABI errors. The converse bites too: an image "
+        "may ship a numpy-1-era pandas or scikit-learn, and `pip install pandas` "
+        "will NOT upgrade an already-installed one, so the stack carries explicit "
+        "numpy-2 lower bounds. If numpy changes in a live kernel, restart the "
+        "runtime once — never force-reinstall numpy repeatedly."
     )
 
     def is_installed(self) -> bool:
@@ -77,7 +111,7 @@ class Science(Component):
         # installed and skipped the rest — scikit-image, scikit-learn, pandas and
         # the others were never installed, and the failure surfaced much later as
         # "No module named 'skimage'" in a tutorial's import cell.
-        return not _missing_modules()
+        return not _broken_modules()
 
     def _install(self, platform=None, **opts) -> None:
         from .._pip import pip_install
@@ -89,13 +123,7 @@ class Science(Component):
     def verify(self) -> bool:
         # Genuinely import every module rather than only locating it: an ABI
         # break ("numpy.dtype size changed") appears on import and nowhere else.
-        import importlib
-        failed = {}
-        for mod in MODULES:
-            try:
-                importlib.import_module(mod)
-            except Exception as exc:
-                failed[mod] = exc
+        failed = _broken_modules()
         if failed:
             print(f"❌ science: {len(failed)} of {len(MODULES)} modules unusable:")
             for mod, exc in failed.items():
