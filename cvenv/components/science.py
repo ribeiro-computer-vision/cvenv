@@ -26,19 +26,38 @@ from ..base import Component, register
 # wheel actually exists.
 NUMPY_PIN = "numpy>=2.0,<2.1" if sys.version_info < (3, 13) else "numpy>=2.1"
 
+# (pip requirement, module to import when checking it is there). The two names
+# differ often enough — scikit-image/skimage, scikit-learn/sklearn, pillow/PIL,
+# opencv-python/cv2 — that checking the wrong one is how a package goes missing
+# without anyone noticing.
 STACK = [
-    NUMPY_PIN,
-    "scipy",
-    "matplotlib",
-    "pandas",
-    "scikit-image",
-    "scikit-learn",
-    "opencv-python",
-    "pillow",
-    "tqdm",
-    "imageio",
-    "colorama",
+    (NUMPY_PIN,       "numpy"),
+    ("scipy",         "scipy"),
+    ("matplotlib",    "matplotlib"),
+    ("pandas",        "pandas"),
+    ("scikit-image",  "skimage"),
+    ("scikit-learn",  "sklearn"),
+    ("opencv-python", "cv2"),
+    ("pillow",        "PIL"),
+    ("tqdm",          "tqdm"),
+    ("imageio",       "imageio"),
+    ("colorama",      "colorama"),
 ]
+REQUIREMENTS = [req for req, _ in STACK]
+MODULES = [mod for _, mod in STACK]
+
+
+def _missing_modules() -> list[str]:
+    """Which of the stack's modules are not importable, without importing them."""
+    import importlib.util
+    missing = []
+    for mod in MODULES:
+        try:
+            if importlib.util.find_spec(mod) is None:
+                missing.append(mod)
+        except (ImportError, ValueError):
+            missing.append(mod)
+    return missing
 
 
 class Science(Component):
@@ -52,30 +71,47 @@ class Science(Component):
     )
 
     def is_installed(self) -> bool:
-        try:
-            import numpy, scipy, cv2  # noqa: F401
-            return True
-        except Exception:
-            return False
+        # Every module the component installs must be present, not just the three
+        # compiled ones. Colab and Lightning Studio ship numpy, scipy and cv2
+        # preinstalled, so checking only those declared the component already
+        # installed and skipped the rest — scikit-image, scikit-learn, pandas and
+        # the others were never installed, and the failure surfaced much later as
+        # "No module named 'skimage'" in a tutorial's import cell.
+        return not _missing_modules()
 
     def _install(self, platform=None, **opts) -> None:
         from .._pip import pip_install
         # numpy first (and alone) so the pin is resolved before the packages that
         # depend on its ABI get (re)built/checked against it.
         pip_install(NUMPY_PIN, check=False)
-        pip_install(*STACK[1:], check=False)
+        pip_install(*REQUIREMENTS[1:], check=False)
 
     def verify(self) -> bool:
-        # If numpy/scipy/cv2 all import, the ABI is consistent on THIS machine —
-        # that's the real success criterion. numpy<2 is fine locally; it only
-        # bites on numpy-2-native Colab/Studio, so warn rather than fail.
-        import numpy
-        import scipy  # noqa: F401
-        import cv2  # noqa: F401
+        # Genuinely import every module rather than only locating it: an ABI
+        # break ("numpy.dtype size changed") appears on import and nowhere else.
+        import importlib
+        failed = {}
+        for mod in MODULES:
+            try:
+                importlib.import_module(mod)
+            except Exception as exc:
+                failed[mod] = exc
+        if failed:
+            print(f"❌ science: {len(failed)} of {len(MODULES)} modules unusable:")
+            for mod, exc in failed.items():
+                print(f"      • {mod}: {type(exc).__name__}: {exc}")
+            print("   Re-run with force=True / --force to install them:\n"
+                  '       cvenv.get_component("science").install(force=True)')
+            return False
+
+        import numpy, cv2  # noqa: F401
+        # numpy<2 is fine locally; it only bites on numpy-2-native Colab/Studio,
+        # so warn rather than fail.
         if int(numpy.__version__.split(".")[0]) < 2:
             print(f"⚠️  science: numpy {numpy.__version__} is <2.0 — fine locally, "
                   "but on Colab/Studio pin >=2.0,<2.1 (else cv2/scipy ABI breaks).")
-        print(f"✅ science: numpy {numpy.__version__}, scipy + cv2 {cv2.__version__} import OK")
+        print(f"✅ science: all {len(MODULES)} modules import "
+              f"(numpy {numpy.__version__}, cv2 {cv2.__version__})")
         return True
 
 
