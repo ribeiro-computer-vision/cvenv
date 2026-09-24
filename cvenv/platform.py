@@ -15,6 +15,36 @@ import os
 from typing import Tuple
 
 
+_warned_missing_cwd = False
+
+
+def _safe_cwd(default: str | None = None) -> str:
+    """``os.getcwd()``, tolerant of a working directory that no longer exists.
+
+    A kernel keeps running after its cwd is deleted — a cleaned-up temp build
+    dir, a removed clone, a studio restart — and ``os.getcwd()`` then raises
+    ``FileNotFoundError``. Platform detection must not be what breaks: it is the
+    first thing every notebook calls, so the traceback reads as "cvenv is
+    broken" when the real problem is that the directory is gone. Warn once and
+    carry on; every caller here only needs a plausible base path.
+    """
+    global _warned_missing_cwd
+    if default is None:
+        # Home, not "/": callers derive writable paths from this (a wheel cache,
+        # a clone directory), and root is not writable.
+        default = os.path.expanduser("~")
+    try:
+        return os.getcwd()
+    except OSError:
+        if not _warned_missing_cwd:
+            _warned_missing_cwd = True
+            print("⚠️  this process's working directory no longer exists, so "
+                  "paths\n    derived from it may be wrong. Fix it with "
+                  "os.chdir(os.path.expanduser('~'))\n    — or any directory "
+                  "that does exist — then re-run.")
+        return default
+
+
 def _is_colab() -> bool:
     """True only in a real Colab runtime.
 
@@ -32,7 +62,7 @@ def _is_colab() -> bool:
         return True
     except Exception:
         pass
-    cwd = os.getcwd()
+    cwd = _safe_cwd("")
     return cwd == "/content" or cwd.startswith("/content/")
 
 
@@ -69,9 +99,10 @@ class PlatformManager:
             return "Colab", "/content/"
         if os.getenv("LIGHTNING_ARTIFACTS_DIR"):
             return "LightningAI", os.getenv("LIGHTNING_ARTIFACTS_DIR") + "/"
+        cwd = _safe_cwd().rstrip("/") + "/"
         if _is_wsl():
-            return "WSL", os.getcwd() + "/"
-        return "LocalPC", os.getcwd() + "/"
+            return "WSL", cwd
+        return "LocalPC", cwd
 
     @staticmethod
     def mount_gdrive():

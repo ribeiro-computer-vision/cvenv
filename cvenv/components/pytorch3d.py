@@ -107,7 +107,8 @@ def _default_wheel_dir(platform=None) -> str:
         return "/workspace/cvenv_wheels"                 # persistent volume
     if platform == "LightningAI":
         studio = "/teamspace/studios/this_studio"
-        base = studio if os.path.isdir(studio) else os.getcwd()
+        from ..platform import _safe_cwd
+        base = studio if os.path.isdir(studio) else _safe_cwd()
         return os.path.join(base, "cvenv_wheels")
     # LocalPC / unknown: a stable spot in the user's home
     return os.path.join(os.path.expanduser("~"), ".cvenv", "wheels")

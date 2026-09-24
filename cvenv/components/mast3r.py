@@ -40,7 +40,8 @@ def _timed(label: str, timings: list):
 
 
 def _repo_root(base_dir=None) -> Path:
-    return Path(base_dir or os.getcwd()) / "mast3r"
+    from ..platform import _safe_cwd
+    return Path(base_dir or _safe_cwd()) / "mast3r"
 
 
 def _ensure_on_path(repo_root: Path):
