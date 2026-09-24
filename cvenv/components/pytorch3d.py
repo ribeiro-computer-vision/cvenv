@@ -27,6 +27,14 @@ from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
 from ..base import Component, register
 from .science import NUMPY_PIN
 
+# PyTorch3D does not declare these, but importing part of it fails without them.
+# pytorch3d.vis.plotly_vis — which the 3-D plotting helpers in the course
+# notebooks use — does `import plotly.graph_objects`, so a perfectly good install
+# raises "No module named 'plotly'" at the first visualisation import. Installing
+# pytorch3d without them yields something that passes every check cvenv makes and
+# then breaks in a tutorial.
+VIS_EXTRAS = ["plotly"]
+
 
 @contextlib.contextmanager
 def _system_linker():
@@ -721,6 +729,7 @@ class PyTorch3D(Component):
         # Keep numpy-2 ABI intact (see the `science` component's note).
         pip_install(NUMPY_PIN, check=False)
         pip_install("iopath", check=False)
+        pip_install(*VIS_EXTRAS, check=False)
 
         if from_source:
             self._source_build(wheel_out_dir=wheel_out_dir, platform=platform,
@@ -791,6 +800,18 @@ class PyTorch3D(Component):
         import pytorch3d
         import pytorch3d._C  # noqa: F401
         print(f"✅ pytorch3d {pytorch3d.__version__} (_C OK)")
+
+        # The vis helpers are a separate failure mode from _C: they need plotly,
+        # which pytorch3d does not require. Report it here rather than letting it
+        # surface as an ImportError in a notebook. Not fatal — the rest of
+        # pytorch3d is perfectly usable without it.
+        try:
+            import pytorch3d.vis.plotly_vis  # noqa: F401
+            print("   ✅ pytorch3d.vis usable (plotly present)")
+        except ImportError as exc:
+            print(f"   ⚠️  pytorch3d.vis unavailable: {exc}\n"
+                  f"      the 3-D plotting helpers need it — "
+                  f"pip install {' '.join(VIS_EXTRAS)}")
 
         ok, detail = _cuda_kernels_ok()
         if ok:
