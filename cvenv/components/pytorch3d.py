@@ -283,6 +283,21 @@ def _short(v):
     return ".".join(str(v).split("+")[0].split(".")[:2]) if v else v
 
 
+def _tag_from_filename(whl: str):
+    """The python tag encoded in a wheel's filename, e.g. ``cp312``.
+
+    Wheel names are ``name-version[-build]-pytag-abitag-platform.whl``, so the
+    interpreter a wheel was built for is stated in the filename itself. Worth
+    reading: every wheel cvenv saved before sidecars existed has no metadata
+    beside it, and those are exactly the wheels carried over in Drive folders.
+    """
+    stem = os.path.basename(whl)
+    if not stem.endswith(".whl"):
+        return None
+    parts = stem[:-4].split("-")
+    return parts[-3] if len(parts) >= 5 else None
+
+
 def wheel_compatibility(whl: str):
     """Is ``whl`` usable in this runtime?
 
@@ -294,6 +309,17 @@ def wheel_compatibility(whl: str):
     meta = read_wheel_metadata(whl)
     now = build_env()
     if not meta:
+        # No sidecar, but the filename still settles the interpreter, and a
+        # python mismatch is fatal by itself — pip refuses such a wheel outright.
+        # Returning a bare "unverified" made this the *preferred* fallback over a
+        # wheel whose sidecar proved it unusable, so a Drive folder holding a
+        # sidecar-less cp312 wheel beside a documented cp313 one served the cp312
+        # wheel to a cp313 runtime: the one thing that could not possibly work.
+        file_tag = _tag_from_filename(whl)
+        if file_tag and now.get("python_tag") and file_tag != now["python_tag"]:
+            return False, [f"python: this wheel is {file_tag}, the runtime is "
+                           f"{now['python_tag']} (read from the wheel's filename; "
+                           "no build metadata recorded beside it)"]
         return None, ["no build metadata recorded beside this wheel"]
 
     reasons, unchecked = [], []
@@ -757,8 +783,24 @@ class PyTorch3D(Component):
                       f"{meta.get('torch')} / CUDA {meta.get('cuda')}")
 
             print(f"Installing PyTorch3D from wheel: {local.name}")
-            pip_install(str(local), extra_args=["--force-reinstall", "--no-deps"],
-                        check=False)
+            rc = pip_install(str(local),
+                             extra_args=["--force-reinstall", "--no-deps"],
+                             check=False)
+            if rc != 0:
+                # pip refusing the wheel is a different failure from the wheel
+                # loading badly, and check=False was throwing it away: "not a
+                # supported wheel on this platform" vanished, and the generic
+                # message below then blamed torch/CUDA for a python mismatch.
+                file_tag = _tag_from_filename(str(local))
+                why = ""
+                if file_tag and file_tag != build_env().get("python_tag"):
+                    why = (f"\nThe wheel is for {file_tag} but this runtime is "
+                           f"{build_env().get('python_tag')}, so pip cannot install "
+                           "it at all. Rebuild here:\n"
+                           '    cvenv.get_component("pytorch3d").build_wheel(force=True)')
+                raise RuntimeError(
+                    f"pip refused to install {local.name} (exit status {rc}); "
+                    "its output is above." + why)
             if self.is_installed():
                 print("✅ installed from provided wheel.")
                 return
